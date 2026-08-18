@@ -698,6 +698,69 @@
       reader.readAsText(file);
       e.target.value = '';
     },
+    // -------- JSON backup (full state — accounts, investments, rules, history) --------
+    exportJSON() {
+      const blob = new Blob([JSON.stringify(this.pickPersisted(), null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'patrimonio_backup.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    // Merges an exported (or externally converted) backup into the current data —
+    // additive, not a replace: every imported id is regenerated so it can never
+    // collide with what's already here, while cross-references (which account,
+    // category or fund a transaction/rule points to) are remapped to match.
+    importJSONFile(e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        let data;
+        try { data = JSON.parse(String(ev.target.result)); } catch (err) { alert('El archivo no es un JSON válido'); return; }
+        if (!data || typeof data !== 'object') { alert('El archivo no tiene el formato esperado'); return; }
+        try {
+          const categories = [...this.state.categories];
+          const catIdMap = {};
+          (data.categories || []).forEach(c => {
+            const existing = categories.find(x => x.name === c.name && x.type === c.type);
+            if (existing) { catIdMap[c.id] = existing.id; }
+            else { const nc = { id: uid(), name: c.name, type: c.type, color: c.color || PALETTE[0] }; categories.push(nc); catIdMap[c.id] = nc.id; }
+          });
+          const accounts = [...this.state.accounts];
+          const accIdMap = {};
+          (data.accounts || []).forEach(a => {
+            const na = { ...a, id: uid(), order: accounts.length };
+            accIdMap[a.id] = na.id;
+            accounts.push(na);
+          });
+          const investments = [...this.state.investments];
+          const fundIdMap = {};
+          (data.investments || []).forEach(f => {
+            const nf = { ...f, id: uid(), ops: (f.ops || []).map(o => ({ ...o, id: uid() })) };
+            fundIdMap[f.id] = nf.id;
+            investments.push(nf);
+          });
+          const remap = (t) => ({
+            ...t, id: uid(),
+            accountId: t.accountId ? (accIdMap[t.accountId] || t.accountId) : t.accountId,
+            toAccountId: t.toAccountId ? (accIdMap[t.toAccountId] || t.toAccountId) : t.toAccountId,
+            categoryId: t.categoryId ? (catIdMap[t.categoryId] || t.categoryId) : t.categoryId,
+            fundId: t.fundId ? (fundIdMap[t.fundId] || t.fundId) : t.fundId,
+          });
+          const transactions = [...(data.transactions || []).map(remap), ...this.state.transactions];
+          const recurringRules = [...this.state.recurringRules, ...(data.recurringRules || []).map(remap)];
+          const mergeHistory = (existing, incoming) => {
+            const map = {};
+            [...(incoming || []), ...existing].forEach(h => { map[h.date] = h; });
+            return Object.values(map).sort((a, b) => a.date < b.date ? -1 : 1);
+          };
+          const netWorthHistory = mergeHistory(this.state.netWorthHistory, data.netWorthHistory);
+          const investmentHistory = mergeHistory(this.state.investmentHistory, data.investmentHistory);
+          this.setState({ categories, accounts, investments, transactions, recurringRules, netWorthHistory, investmentHistory, modal: null });
+          alert('Importado: ' + investments.length + ' inversiones, ' + (data.transactions || []).length + ' movimientos, ' + (data.accounts || []).length + ' cuentas nuevas.');
+        } catch (err) { alert('No se pudo importar el archivo: ' + err.message); }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    },
     seedDemoData() {
       if (!window.confirm('Esto reemplazará tus datos actuales con datos de ejemplo. ¿Continuar?')) return;
       const cats = defaultCategories();
@@ -1064,8 +1127,11 @@
     const fndPct = Math.max(0, marketValue) / donutTotal * 100;
     const DONUT_GAP = 24, DONUT_MIN = 18;
     const accLen = accPct / 100 * CIRC, fndLen = fndPct / 100 * CIRC;
-    const accDrawLen = accPct <= 0 ? 0 : Math.max(DONUT_MIN, accLen - DONUT_GAP);
-    const fndDrawLen = fndPct <= 0 ? 0 : Math.max(DONUT_MIN, fndLen - DONUT_GAP);
+    // Use the same rounded % shown on screen to decide whether a segment draws at all —
+    // otherwise a floating-point residue that rounds to "0%" could still paint a phantom
+    // sliver (the DONUT_MIN floor kicking in for a technically-nonzero-but-invisible value).
+    const accDrawLen = Math.round(accPct) <= 0 ? 0 : Math.max(DONUT_MIN, accLen - DONUT_GAP);
+    const fndDrawLen = Math.round(fndPct) <= 0 ? 0 : Math.max(DONUT_MIN, fndLen - DONUT_GAP);
     const donutAccountsDasharray = accDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
     const donutFundsDasharray = fndDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
     const donutFundsOffset = (-(accLen + DONUT_GAP / 2)).toFixed(1);
@@ -1495,6 +1561,10 @@
         <label style="display:block;margin-top:8px;width:100%;padding:14px;border-radius:14px;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;box-shadow:var(--card-shadow);box-sizing:border-box">Importar datos (CSV)
           <input type="file" accept=".csv" data-action="handleImportFile" style="display:none"/>
         </label>
+        <button type="button" style="margin-top:16px;width:100%;padding:14px;border-radius:14px;border:none;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;text-align:left;box-shadow:var(--card-shadow)" data-action="exportJSON">Exportar copia de seguridad completa (JSON)</button>
+        <label style="display:block;margin-top:8px;width:100%;padding:14px;border-radius:14px;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;box-shadow:var(--card-shadow);box-sizing:border-box">Importar copia de seguridad (JSON)
+          <input type="file" accept=".json" data-action="handleImportJSON" style="display:none"/>
+        </label>
         <button type="button" style="margin-top:16px;width:100%;padding:14px;border-radius:14px;border:none;background:oklch(94% 0.04 25);color:var(--red);font-size:14px;font-weight:700;cursor:pointer" data-action="resetAll">Borrar todos los datos</button>
       </div>
     </div>`;
@@ -1871,6 +1941,7 @@
     deleteFund: () => App.deleteFund(),
     loadDemoData: () => App.seedDemoData(),
     exportCSV: () => App.exportCSV(),
+    exportJSON: () => App.exportJSON(),
     resetAll: () => App.resetAll(),
   };
 
@@ -1884,7 +1955,7 @@
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const action = el.dataset.action;
-      if (action === 'none' || action === 'handleImportFile') return;
+      if (action === 'none' || action === 'handleImportFile' || action === 'handleImportJSON') return;
       const id = el.dataset.id;
       const value = el.dataset.value;
       if (SIMPLE_SETTERS[action]) { SIMPLE_SETTERS[action](App.state, id, value); App.commit(); return; }
@@ -1920,6 +1991,7 @@
 
     root.addEventListener('change', (e) => {
       if (e.target.dataset.action === 'handleImportFile') App.handleImportFile(e);
+      if (e.target.dataset.action === 'handleImportJSON') App.importJSONFile(e);
     });
 
     root.addEventListener('pointerdown', (e) => {

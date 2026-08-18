@@ -2,7 +2,9 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   height: 100%;
+  height: 100dvh; /* iOS Safari/standalone: real visual viewport, avoids the vh/toolbar gap */
   margin: 0;
+  overflow: hidden; /* only .screen / .modal-body / .bottom-sheet scroll; body never does */
   overscroll-behavior-y: none;
   background: oklch(96.5% 0.01 90);
 }
@@ -43,13 +45,19 @@ svg { display: block; }
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* ---------- app shell ---------- */
-#app { min-height: 100%; display: flex; flex-direction: column; background: var(--page-bg); }
+/* ---------- app shell ----------
+   Everything below is a normal-flow flex column filling the exact viewport
+   (#app has height:100%, no child ever uses position:fixed for docking —
+   fixed + vh doesn't track iOS Safari's dynamic toolbar and leaves a gap
+   at the bottom). Only full-screen overlays (modals, bottom sheets) use
+   position:fixed, since those cover the whole viewport rather than
+   docking a thin bar to one edge. */
+#app { height: 100%; display: flex; flex-direction: column; background: var(--page-bg); }
 
-.onboarding { min-height: 100vh; overflow-y: auto; padding: calc(24px + var(--safe-top)) 20px 40px; }
+.onboarding { flex: 1; min-height: 0; overflow-y: auto; padding: calc(24px + var(--safe-top)) 20px 40px; -webkit-overflow-scrolling: touch; }
 
-.app-main { min-height: 100vh; display: flex; flex-direction: column; }
-.screen { flex: 1; overflow-y: auto; padding: calc(18px + var(--safe-top)) 0 calc(90px + var(--safe-bottom)); -webkit-overflow-scrolling: touch; }
+.app-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.screen { flex: 1; min-height: 0; overflow-y: auto; padding: calc(18px + var(--safe-top)) 0 24px; -webkit-overflow-scrolling: touch; }
 .screen-pad { padding: 0 20px; }
 
 .page-title { font-size: 26px; font-weight: 800; color: var(--ink); letter-spacing: -0.5px; text-align: center; }
@@ -143,9 +151,12 @@ textarea.field-input { resize: none; }
 
 .sparkline-card { margin-top: 24px; }
 
-/* ---------- bottom nav ---------- */
+/* ---------- bottom nav ----------
+   Normal flow (not fixed) — last flex child of #app, right after .app-main,
+   so it always sits exactly at the true bottom of the viewport regardless
+   of iOS Safari's toolbar state. position:relative only to anchor the FAB. */
 .tab-bar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  position: relative; flex-shrink: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-around;
   padding: 10px 12px calc(18px + var(--safe-bottom)); background: #fff;
   border-top: 1px solid var(--divider);
