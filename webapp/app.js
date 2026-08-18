@@ -846,16 +846,16 @@
       <div style="font-size:15px;color:var(--ink-soft);margin-top:6px;line-height:1.4">Vamos a crear tu primera cuenta para calcular tu patrimonio.</div>
 
       <div class="field-label" style="margin-top:28px">Tu nombre</div>
-      <input type="text" class="field-input" style="margin-top:8px" data-bind="obName" value="${esc(s.obName)}" placeholder="Ej. Miguel Ángel"/>
+      <input type="text" class="field-input" style="margin-top:8px;padding:16px;font-size:16px" data-bind="obName" value="${esc(s.obName)}" placeholder="Ej. Miguel Ángel"/>
 
       <div class="field-label" style="margin-top:24px">Nombre de la cuenta</div>
-      <input type="text" class="field-input" style="margin-top:8px" data-bind="obAccName" value="${esc(s.obAccName)}" placeholder="Ej. BBVA, Efectivo, Ahorros..."/>
+      <input type="text" class="field-input" style="margin-top:8px;padding:16px;font-size:16px" data-bind="obAccName" value="${esc(s.obAccName)}" placeholder="Ej. BBVA, Efectivo, Ahorros..."/>
 
       <div class="field-label" style="margin-top:20px">Tipo de cuenta</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${typeChips}</div>
 
       <div class="field-label" style="margin-top:20px">Saldo inicial</div>
-      <input type="text" inputmode="decimal" class="field-input big" style="margin-top:8px" data-bind="obBalance" value="${esc(s.obBalance)}" placeholder="0,00"/>
+      <input type="text" inputmode="decimal" class="field-input big" style="margin-top:8px;padding:16px" data-bind="obBalance" value="${esc(s.obBalance)}" placeholder="0,00"/>
       ${s.obAccType === 'tarjeta' ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">Se guardará como deuda (saldo negativo).</div>` : ''}
 
       <div class="field-label" style="margin-top:20px">Color</div>
@@ -935,7 +935,7 @@
         <button type="button" class="icon-btn" style="width:36px;height:36px;background:oklch(93% 0.005 90)" data-action="openAllTx">${Icons.search()}</button>
       </div>
 
-      ${recentTx.length ? `<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-bottom:8px">${recentTx.map(Render.txRow).join('')}</div>`
+      ${recentTx.length ? `<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-bottom:24px">${recentTx.map(Render.txRow).join('')}</div>`
         : `<div class="empty-note" style="margin-top:12px">Aún no hay movimientos. Pulsa el botón "+" para registrar el primero.</div>`}
     </div>`;
   };
@@ -1006,12 +1006,10 @@
 
       <div class="card" style="margin-top:16px;border-radius:9999px;padding:5px;display:flex">${periodChips}</div>
 
-      <div class="card" style="margin-top:12px;border-radius:9999px;padding:14px 8px" style="display:flex;align-items:center;justify-content:space-between">
-        <div class="row-flex between" style="width:100%">
-          <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodPrev">${Icons.arrowLeft()}</button>
-          <div style="font-size:15px;font-weight:800;color:var(--ink);text-align:center;padding:0 6px">${esc(range.label)}</div>
-          <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodNext">${Icons.arrowRight()}</button>
-        </div>
+      <div class="card" style="margin-top:12px;border-radius:9999px;padding:14px 8px;display:flex;align-items:center;justify-content:space-between">
+        <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodPrev">${Icons.arrowLeft()}</button>
+        <div style="font-size:15px;font-weight:800;color:var(--ink);text-align:center;padding:0 6px">${esc(range.label)}</div>
+        <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodNext">${Icons.arrowRight()}</button>
       </div>
 
       <div class="section-title-sm" style="margin-top:24px">Resumen del periodo</div>
@@ -1112,9 +1110,9 @@
 
     const plansHtml = plansList.length ? `
       <div style="margin-top:24px">
-        <div class="section-title-sm">Plan mensual de aportaciones</div>
+        <div style="font-size:16px;font-weight:800;color:var(--ink)">Plan mensual de aportaciones</div>
         <div class="card" style="margin-top:10px">
-          <div class="label-caps">Plan mensual</div>
+          <div style="font-size:11px;font-weight:700;color:oklch(55% 0.01 90);text-transform:uppercase;letter-spacing:0.5px">Plan mensual</div>
           <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
             <div style="font-size:34px;font-weight:800;color:var(--ink)">${esc(App.fmt(monthlyPlanTotal))}</div>
             <div style="font-size:14px;color:var(--ink-soft);font-weight:600">/mes</div>
@@ -1150,8 +1148,8 @@
         <div class="donut-wrap">
           <svg width="200" height="200" viewBox="0 0 200 200">
             <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(95% 0.004 90)" stroke-width="18"/>
-            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(62% 0.15 250)" stroke-width="18" stroke-linecap="butt" transform="rotate(-90 100 100)" stroke-dasharray="${donutAccountsDasharray}"/>
-            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(66% 0.15 155)" stroke-width="18" stroke-linecap="butt" transform="rotate(-90 100 100)" stroke-dasharray="${donutFundsDasharray}" stroke-dashoffset="${donutFundsOffset}"/>
+            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(62% 0.15 250)" stroke-width="18" stroke-linecap="round" transform="rotate(-90 100 100)" stroke-dasharray="${donutAccountsDasharray}"/>
+            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(66% 0.15 155)" stroke-width="18" stroke-linecap="round" transform="rotate(-90 100 100)" stroke-dasharray="${donutFundsDasharray}" stroke-dashoffset="${donutFundsOffset}"/>
           </svg>
           <div class="donut-center">
             <div style="font-size:13px;color:oklch(55% 0.01 90)">Total</div>

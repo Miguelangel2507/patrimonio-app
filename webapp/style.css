@@ -50,9 +50,9 @@ svg { display: block; }
 
 .app-main { min-height: 100vh; display: flex; flex-direction: column; }
 .screen { flex: 1; overflow-y: auto; padding: calc(18px + var(--safe-top)) 0 calc(90px + var(--safe-bottom)); -webkit-overflow-scrolling: touch; }
-.screen-pad { padding: 0 18px; }
+.screen-pad { padding: 0 20px; }
 
-.page-title { font-size: 28px; font-weight: 800; color: var(--ink); letter-spacing: -0.5px; text-align: center; }
+.page-title { font-size: 26px; font-weight: 800; color: var(--ink); letter-spacing: -0.5px; text-align: center; }
 .page-subtitle { font-size: 14px; color: var(--ink-soft); margin-top: 2px; text-align: center; }
 .section-title { font-size: 20px; font-weight: 800; color: var(--ink); }
 .section-title-sm { font-size: 18px; font-weight: 800; color: var(--ink); }
@@ -137,11 +137,11 @@ textarea.field-input { resize: none; }
 
 /* ---------- home ---------- */
 .home-header { display: flex; align-items: center; gap: 12px; }
-.net-worth-block { margin-top: 28px; text-align: center; }
-.net-worth-value { font-size: 42px; font-weight: 800; color: var(--ink); letter-spacing: -1px; margin-top: 6px; }
+.net-worth-block { margin-top: 32px; text-align: center; }
+.net-worth-value { font-size: 44px; font-weight: 800; color: var(--ink); letter-spacing: -1px; margin-top: 6px; }
 .delta-chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 16px; border-radius: 9999px; font-size: 13px; font-weight: 700; }
 
-.sparkline-card { margin-top: 22px; }
+.sparkline-card { margin-top: 24px; }
 
 /* ---------- bottom nav ---------- */
 .tab-bar {
@@ -154,7 +154,8 @@ textarea.field-input { resize: none; }
 .tab-item.active { color: var(--green); }
 .tab-item .tab-label { font-size: 10px; font-weight: 700; }
 .fab {
-  position: relative; top: -22px; width: 56px; height: 56px; border-radius: 9999px;
+  position: absolute; top: -24px; left: 50%; transform: translateX(-50%);
+  width: 56px; height: 56px; border-radius: 9999px;
   background: var(--green); display: flex; align-items: center; justify-content: center;
   cursor: pointer; border: none; box-shadow: 0 8px 18px oklch(58% 0.15 155 / 40%);
 }
@@ -180,7 +181,7 @@ textarea.field-input { resize: none; }
 
 /* ---------- accounts ---------- */
 .account-card { flex-shrink: 0; width: 322px; scroll-snap-align: start; border-radius: 24px; padding: 22px; }
-.account-scroller { margin-top: 16px; display: flex; gap: 14px; overflow-x: auto; padding: 0 18px 4px; scroll-snap-type: x mandatory; }
+.account-scroller { margin-top: 16px; display: flex; gap: 14px; overflow-x: auto; padding: 0 20px; scroll-snap-type: x mandatory; }
 .account-dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
 .account-dot { height: 6px; border-radius: 9999px; transition: width .15s, background .15s; }
 .quick-action { flex-shrink: 0; width: 110px; background: #fff; box-shadow: var(--card-shadow); border-radius: 18px; padding: 16px 12px; cursor: pointer; text-align: center; border: none; }
