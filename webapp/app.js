@@ -199,6 +199,7 @@
         catTab: 'expense',
         catInlineOpen: false,
         liquidezOpen: true, fondosOpen: true,
+        editingTxId: null, txEditAmount: '', txEditDate: '', txEditCategoryId: '', txEditAccountId: '', txEditNote: '',
       };
     },
 
@@ -371,9 +372,10 @@
       const newUnits = fund.units + units;
       const newInvested = fund.totalInvested + amt;
       fund.units = newUnits; fund.totalInvested = newInvested; fund.avgCost = newUnits ? newInvested / newUnits : 0; fund.currentPrice = price;
-      fund.ops = [{ id: uid(), type: 'buy', date: this.state.txDate, units, price, amount: amt }, ...fund.ops];
+      const newOp = { id: uid(), type: 'buy', date: this.state.txDate, units, price, amount: amt };
+      fund.ops = [newOp, ...fund.ops];
       const accounts = this.state.accounts.map(a => a.id === this.state.txAccountId ? { ...a, balance: a.balance - amt } : a);
-      const tx = { id: uid(), type: 'investment_buy', amount: amt, date: this.state.txDate, accountId: this.state.txAccountId, fundId: fund.id, note: this.state.txNote || fund.name };
+      const tx = { id: uid(), type: 'investment_buy', amount: amt, date: this.state.txDate, accountId: this.state.txAccountId, fundId: fund.id, opId: newOp.id, note: this.state.txNote || fund.name };
       let recurringRules = this.state.recurringRules;
       if (this.state.txRepeat) {
         const rule = { id: uid(), type: 'investment', amount: amt, accountId: this.state.txAccountId, fundId: fund.id, note: this.state.txNote || ('Plan ' + fund.name), frequency: this.state.txFreq, nextDate: this.addFrequency(this.state.txDate, this.state.txFreq) };
@@ -398,9 +400,10 @@
         if (!fund) return;
         const units = rule.amount / price;
         fund.units += units; fund.totalInvested += rule.amount; fund.avgCost = fund.totalInvested / fund.units; fund.currentPrice = price;
-        fund.ops = [{ id: uid(), type: 'buy', date: today, units, price, amount: rule.amount }, ...fund.ops];
+        const newOp = { id: uid(), type: 'buy', date: today, units, price, amount: rule.amount };
+        fund.ops = [newOp, ...fund.ops];
         const accounts = this.state.accounts.map(a => a.id === rule.accountId ? { ...a, balance: a.balance - rule.amount } : a);
-        const tx = { id: uid(), type: 'investment_buy', amount: rule.amount, date: today, accountId: rule.accountId, fundId: fund.id, note: rule.note, recurringRuleId: rule.id };
+        const tx = { id: uid(), type: 'investment_buy', amount: rule.amount, date: today, accountId: rule.accountId, fundId: fund.id, opId: newOp.id, note: rule.note, recurringRuleId: rule.id };
         const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
         this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], recurringRules });
       } else {
@@ -572,13 +575,14 @@
       const fee = parseNum(this.state.fundActionFee) || 0;
       if (!units || units <= 0 || !amt || amt <= 0 || !this.state.fundActionAccountId) { alert('Completa los datos'); return; }
       const price = amt / units, cost = amt + fee, cashOut = amt + fee;
+      const newOp = { id: uid(), type: 'buy', date: todayISO(), units, price, amount: cost };
       const investments = this.state.investments.map(f => {
         if (f.id !== fund.id) return f;
         const newUnits = f.units + units, newInvested = f.totalInvested + cost;
-        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newInvested / newUnits, currentPrice: price, ops: [{ id: uid(), type: 'buy', date: todayISO(), units, price, amount: cost }, ...f.ops] };
+        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newInvested / newUnits, currentPrice: price, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance - cashOut } : a);
-      const tx = { id: uid(), type: 'investment_buy', amount: cashOut, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, note: fund.name };
+      const tx = { id: uid(), type: 'investment_buy', amount: cashOut, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
       this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], fundAction: null });
     },
     confirmFundSell() {
@@ -588,14 +592,15 @@
       const fee = parseNum(this.state.fundActionFee) || 0;
       if (!units || units <= 0 || units > fund.units + 1e-9 || !amt || amt <= 0 || !this.state.fundActionAccountId) { alert('Datos inválidos'); return; }
       const price = amt / units, proceeds = amt - fee;
+      const newOp = { id: uid(), type: 'sell', date: todayISO(), units, price, amount: proceeds };
       const investments = this.state.investments.map(f => {
         if (f.id !== fund.id) return f;
         const newUnits = f.units - units;
         const newInvested = newUnits > 1e-9 ? f.totalInvested * (newUnits / f.units) : 0;
-        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newUnits > 1e-9 ? newInvested / newUnits : 0, currentPrice: price, ops: [{ id: uid(), type: 'sell', date: todayISO(), units, price, amount: proceeds }, ...f.ops] };
+        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newUnits > 1e-9 ? newInvested / newUnits : 0, currentPrice: price, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance + proceeds } : a);
-      const tx = { id: uid(), type: 'investment_sell', amount: proceeds, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, note: fund.name };
+      const tx = { id: uid(), type: 'investment_sell', amount: proceeds, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
       this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], fundAction: null });
     },
     deleteFund() {
@@ -605,6 +610,78 @@
       const transactions = this.state.transactions.filter(t => t.fundId !== id);
       const recurringRules = this.state.recurringRules.filter(r => r.fundId !== id);
       this.setState({ investments, transactions, recurringRules, modal: null, activeFundId: null });
+    },
+    recomputeFundFromOps(ops) {
+      const sorted = [...ops].sort((a, b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+      let units = 0, invested = 0;
+      sorted.forEach(op => {
+        if (op.type === 'buy') { units += op.units; invested += op.amount; }
+        else { const newUnits = units - op.units; invested = newUnits > 1e-9 ? invested * (newUnits / units) : 0; units = newUnits; }
+      });
+      return { units, totalInvested: invested, avgCost: units > 1e-9 ? invested / units : 0 };
+    },
+
+    // -------- transaction detail: view / edit / delete --------
+    openTxDetail(id) {
+      const t = this.state.transactions.find(x => x.id === id);
+      if (!t) return;
+      this.setState({
+        editingTxId: id, modal: 'txDetail',
+        txEditAmount: String(Math.abs(t.amount)), txEditDate: t.date,
+        txEditCategoryId: t.categoryId || '', txEditAccountId: t.accountId || '', txEditNote: t.note || '',
+      });
+    },
+    saveTxEdit() {
+      const t = this.state.transactions.find(x => x.id === this.state.editingTxId);
+      if (!t) return;
+      if (t.type !== 'expense' && t.type !== 'income' && t.type !== 'adjustment') return;
+      const newAmt = parseNum(this.state.txEditAmount);
+      if (!newAmt || newAmt <= 0) { alert('Introduce un importe válido'); return; }
+      const signedNew = (t.type === 'expense' ? -1 : 1) * newAmt;
+      const oldAccountId = t.accountId, newAccountId = this.state.txEditAccountId || t.accountId;
+      let accounts = this.state.accounts;
+      if (oldAccountId) accounts = accounts.map(a => a.id === oldAccountId ? { ...a, balance: a.balance - (t.type === 'expense' ? -t.amount : t.amount) } : a);
+      if (newAccountId) accounts = accounts.map(a => a.id === newAccountId ? { ...a, balance: a.balance + signedNew } : a);
+      const transactions = this.state.transactions.map(x => x.id === t.id ? {
+        ...x, amount: newAmt, date: this.state.txEditDate || x.date,
+        accountId: newAccountId, categoryId: this.state.txEditCategoryId || x.categoryId, note: this.state.txEditNote,
+      } : x);
+      this.setState({ accounts, transactions, modal: null, editingTxId: null });
+    },
+    deleteTx(id) {
+      const t = this.state.transactions.find(x => x.id === id);
+      if (!t) return;
+      if (!window.confirm('¿Eliminar este movimiento? Se deshará su efecto en el saldo.')) return;
+      let accounts = this.state.accounts;
+      let investments = this.state.investments;
+      let transactions = this.state.transactions;
+      let recurringRules = this.state.recurringRules;
+
+      if (t.type === 'transfer_out' || t.type === 'transfer_in') {
+        const pair = transactions.filter(x => x.linkedId && x.linkedId === t.linkedId);
+        pair.forEach(p => { if (p.accountId) accounts = accounts.map(a => a.id === p.accountId ? { ...a, balance: a.balance - p.amount } : a); });
+        transactions = transactions.filter(x => !(x.linkedId && x.linkedId === t.linkedId));
+      } else if (t.type === 'investment_buy' || t.type === 'investment_sell') {
+        investments = investments.map(f => {
+          if (f.id !== t.fundId) return f;
+          const ops = f.ops.filter(o => o.id !== t.opId);
+          const recomputed = this.recomputeFundFromOps(ops);
+          return { ...f, ops, ...recomputed };
+        });
+        if (t.accountId) {
+          const delta = t.type === 'investment_buy' ? t.amount : -t.amount; // give cash back on buy, take it back on sell
+          accounts = accounts.map(a => a.id === t.accountId ? { ...a, balance: a.balance + delta } : a);
+        }
+        transactions = transactions.filter(x => x.id !== t.id);
+      } else {
+        // expense / income / adjustment: undo its effect on the account, then drop it
+        if (t.accountId) {
+          const undo = t.type === 'expense' ? t.amount : -t.amount; // expense subtracted amount, so add it back; income/adjustment added, so subtract
+          accounts = accounts.map(a => a.id === t.accountId ? { ...a, balance: a.balance + undo } : a);
+        }
+        transactions = transactions.filter(x => x.id !== t.id);
+      }
+      this.setState({ accounts, investments, transactions, recurringRules, modal: null, editingTxId: null });
     },
 
     // -------- stats --------
@@ -786,7 +863,7 @@
       const buy = (units, price, d) => { fund.ops.unshift({ id: uid(), type: 'buy', date: daysAgo(d), units, price, amount: +(units * price).toFixed(2) }); fund.units += units; fund.totalInvested += units * price; fund.currentPrice = price; };
       buy(2.1, 180, 80); buy(2.05, 195, 50); buy(1.9, 205, 20);
       fund.avgCost = fund.totalInvested / fund.units;
-      fund.ops.forEach(op => { if (op.type === 'buy') transactions.push({ id: uid(), type: 'investment_buy', amount: op.amount, date: op.date, accountId: accId1, fundId, note: fund.name }); });
+      fund.ops.forEach(op => { if (op.type === 'buy') transactions.push({ id: uid(), type: 'investment_buy', amount: op.amount, date: op.date, accountId: accId1, fundId, opId: op.id, note: fund.name }); });
       bal1 -= fund.totalInvested;
       const accounts = [
         { id: accId1, name: 'BBVA', type: 'banco', balance: +bal1.toFixed(2), isDebt: false, color: PALETTE[1], order: 0 },
@@ -869,14 +946,14 @@
   const Render = {};
 
   Render.txRow = (row) => `
-    <div class="tx-row">
+    <button type="button" class="tx-row" style="width:100%;border:none;text-align:left;cursor:pointer" data-action="openTxDetail" data-id="${row.id}">
       <div class="avatar-badge" style="width:42px;height:42px;background:${row.color};font-size:16px">${esc(row.letter)}</div>
       <div style="flex:1;min-width:0">
         <div class="tx-title">${esc(row.title)}</div>
         <div class="tx-sub">${esc(row.subtitle)}</div>
       </div>
       <div class="tx-amount" style="color:${row.amountColor}">${esc(row.amountText)}</div>
-    </div>`;
+    </button>`;
 
   Render.accChip = (a, selectedId, action, App) => `
     <button type="button" class="acc-chip" data-action="${action}" data-id="${a.id}" style="background:${selectedId === a.id ? 'oklch(93% 0.05 155)' : '#fff'};border-color:${selectedId === a.id ? 'oklch(58% 0.15 155)' : 'transparent'}">
@@ -1134,7 +1211,11 @@
     const fndDrawLen = Math.round(fndPct) <= 0 ? 0 : Math.max(DONUT_MIN, fndLen - DONUT_GAP);
     const donutAccountsDasharray = accDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
     const donutFundsDasharray = fndDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
-    const donutFundsOffset = (-(accLen + DONUT_GAP / 2)).toFixed(1);
+    // Offset the funds arc from where the accounts arc actually ends (accDrawLen),
+    // not its full undrawn length (accLen) — those differ once DONUT_GAP is
+    // subtracted, and using the wrong one let the two arcs' gaps be uneven or
+    // the segments visually crowd/overlap at lopsided splits (e.g. 91% / 9%).
+    const donutFundsOffset = (-(accDrawLen + DONUT_GAP)).toFixed(1);
     const pnl = marketValue - totalInvested;
     const pnlPct = totalInvested > 0 ? (pnl / totalInvested * 100) : 0;
 
@@ -1815,6 +1896,71 @@
     </div>`;
   };
 
+  // -------- transaction detail (view / edit / delete) --------
+  Render.modalTxDetail = (App) => {
+    const s = App.state;
+    const t = s.transactions.find(x => x.id === s.editingTxId);
+    if (!t) return `<div class="modal-overlay">${Render.modalHeader('Movimiento')}<div class="modal-body"></div></div>`;
+    const accounts = App.sortedAccounts();
+    const editable = t.type === 'expense' || t.type === 'income' || t.type === 'adjustment';
+    const row = App.buildTxRow(t);
+
+    let body;
+    if (editable) {
+      const categoryOptions = t.type === 'adjustment' ? '' : `
+        <div class="label-caps" style="margin-top:20px">Categoría</div>
+        <div class="hscroll gap14" style="margin-top:8px;padding-bottom:4px">
+          ${s.categories.filter(c => c.type === t.type).map(c => `
+            <button type="button" class="category-chip" data-action="selectTxEditCategory" data-id="${c.id}">
+              <span class="cat-icon" style="background:${c.color};box-shadow:${ringFor(c.color, s.txEditCategoryId === c.id)}">${Icons.category(c.name)}</span>
+              <span class="cat-name">${esc(c.name)}</span>
+            </button>`).join('')}
+        </div>`;
+      body = `
+        <div style="text-align:center;margin-top:8px">
+          <div class="label-caps">${t.type === 'expense' ? 'Gasto' : (t.type === 'income' ? 'Ingreso' : 'Ajuste')}</div>
+          <div style="display:flex;align-items:baseline;justify-content:center;gap:6px;margin-top:8px">
+            <input type="text" inputmode="decimal" data-bind="txEditAmount" value="${esc(s.txEditAmount)}" style="border:none;background:transparent;font-size:44px;font-weight:800;color:var(--ink);width:auto;max-width:180px;text-align:center"/>
+            <span style="font-size:26px;font-weight:700;color:var(--ink-soft)">€</span>
+          </div>
+        </div>
+        <div class="card" style="margin-top:20px;padding:12px">
+          <div class="label-caps" style="letter-spacing:0.4px">Fecha</div>
+          <input type="date" data-bind="txEditDate" value="${esc(s.txEditDate)}" style="border:none;background:transparent;font-size:14px;font-weight:700;color:var(--ink);margin-top:4px;width:100%"/>
+        </div>
+        ${categoryOptions}
+        <div class="label-caps" style="margin-top:20px">Cuenta</div>
+        <div class="hscroll gap10" style="margin-top:8px;padding-bottom:4px">${accounts.map(a => Render.accChip(a, s.txEditAccountId, 'selectTxEditAccount', App)).join('')}</div>
+        <div class="label-caps" style="margin-top:20px">Notas (opcional)</div>
+        <textarea class="field-input" style="margin-top:6px;height:60px" data-bind="txEditNote" placeholder="Añade una descripción...">${esc(s.txEditNote)}</textarea>
+        <button type="button" class="btn-primary" style="margin-top:24px" data-action="saveTxEdit">Guardar cambios</button>
+        <button type="button" class="btn-danger-text" style="margin-top:12px" data-action="deleteTx" data-id="${t.id}">Eliminar movimiento</button>`;
+    } else {
+      const kindLabel = t.type === 'transfer_out' || t.type === 'transfer_in' ? 'Transferencia' : (t.type === 'investment_buy' ? 'Compra de fondo' : 'Venta de fondo');
+      const hint = t.type === 'transfer_out' || t.type === 'transfer_in'
+        ? 'Las transferencias no se pueden editar, solo eliminar (se deshace en ambas cuentas).'
+        : 'Para gestionar esta inversión con más detalle, ve a la pestaña Invertir y abre el fondo.';
+      body = `
+        <div style="text-align:center;margin-top:8px">
+          <div class="label-caps">${kindLabel}</div>
+          <div style="font-size:34px;font-weight:800;color:var(--ink);margin-top:8px">${esc(row.amountText)}</div>
+        </div>
+        <div class="card" style="margin-top:20px">
+          <div style="font-size:15px;font-weight:700;color:var(--ink)">${esc(row.title)}</div>
+          <div style="font-size:13px;color:var(--ink-soft);margin-top:4px">${esc(row.subtitle)}</div>
+          ${t.note ? `<div style="font-size:13px;color:var(--ink-soft);margin-top:8px">${esc(t.note)}</div>` : ''}
+        </div>
+        <div class="empty-note" style="margin-top:16px">${hint}</div>
+        <button type="button" class="btn-danger-text" style="margin-top:16px" data-action="deleteTx" data-id="${t.id}">Eliminar movimiento</button>`;
+    }
+
+    return `
+    <div class="modal-overlay">
+      ${Render.modalHeader('Movimiento')}
+      <div class="modal-body">${body}</div>
+    </div>`;
+  };
+
   Render.modal = (App) => {
     switch (App.state.modal) {
       case 'addTx': return Render.modalAddTx(App);
@@ -1827,6 +1973,7 @@
       case 'fundDetail': return Render.modalFundDetail(App);
       case 'planEdit': return Render.modalPlanEdit(App);
       case 'allTx': return Render.modalAllTx(App);
+      case 'txDetail': return Render.modalTxDetail(App);
       default: return '';
     }
   };
@@ -1891,6 +2038,8 @@
     selectCatTab: (s, id, v) => { s.catTab = v; },
     selectNewCatColor: (s, id, v) => { s.newCatColor = v; },
     selectTxFilter: (s, id, v) => { s.txFilter = v; },
+    selectTxEditCategory: (s, id) => { s.txEditCategoryId = id; },
+    selectTxEditAccount: (s, id) => { s.txEditAccountId = id; },
   };
 
   const ACTIONS = {
@@ -1942,6 +2091,9 @@
     loadDemoData: () => App.seedDemoData(),
     exportCSV: () => App.exportCSV(),
     exportJSON: () => App.exportJSON(),
+    openTxDetail: (id) => App.openTxDetail(id),
+    saveTxEdit: () => App.saveTxEdit(),
+    deleteTx: (id) => App.deleteTx(id),
     resetAll: () => App.resetAll(),
   };
 
