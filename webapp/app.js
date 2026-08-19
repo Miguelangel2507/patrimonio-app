@@ -2030,7 +2030,8 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>` : '';
+        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>
+          <div style="position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:#ff9500;color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none">RAW position:fixed;bottom:0 TEST<br>(no layout system involved — if this box is cut off before the true screen edge, no CSS can reach further)</div>` : '';
         html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;
