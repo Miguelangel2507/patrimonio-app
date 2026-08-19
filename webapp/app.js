@@ -2215,8 +2215,12 @@
 
     App.init();
 
+    // No service worker: any previously-installed one on this device gets
+    // actively removed so it can never again serve a stale cached shell.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.getRegistrations()
+        .then((regs) => regs.forEach((reg) => reg.unregister()))
+        .catch(() => {});
     }
   });
 
