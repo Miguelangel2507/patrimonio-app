@@ -59,32 +59,66 @@ function distToSegment(px, py, ax, ay, bx, by) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function drawIcon(size, roundCorners) {
+// quadratic bezier point at t
+function bezierPoint(p0, p1, p2, t) {
+  const mt = 1 - t;
+  return [
+    mt * mt * p0[0] + 2 * mt * t * p1[0] + t * t * p2[0],
+    mt * mt * p0[1] + 2 * mt * t * p1[1] + t * t * p2[1],
+  ];
+}
+
+function distToCurve(px, py, p0, p1, p2, steps) {
+  let best = Infinity;
+  let prev = p0;
+  for (let i = 1; i <= steps; i++) {
+    const pt = bezierPoint(p0, p1, p2, i / steps);
+    const d = distToSegment(px, py, prev[0], prev[1], pt[0], pt[1]);
+    if (d < best) best = d;
+    prev = pt;
+  }
+  return best;
+}
+
+// true inside a rect, with its top two corners rounded by radius rr
+function inRoundedTopRect(x, y, bx, by, bw, bh, rr) {
+  if (x < bx || x > bx + bw || y < by || y > by + bh) return false;
+  if (y >= by + rr) return true; // below the rounded band, plain rect
+  const cxL = bx + rr, cxR = bx + bw - rr;
+  if (x >= cxL && x <= cxR) return true; // between the two corner circles
+  const cx = x < cxL ? cxL : cxR;
+  const dx = x - cx, dy = y - (by + rr);
+  return dx * dx + dy * dy <= rr * rr;
+}
+
+function drawIcon(size) {
   const px = new Uint8ClampedArray(size * size * 4);
   const bg = [22, 35, 61];      // navy, top
   const bgDark = [14, 22, 40];  // navy, bottom (subtle vertical gradient)
   const white = [255, 255, 255];
-  const r = roundCorners ? size * 0.22 : 0; // OS applies its own mask on real app icons
+  const r = size * 0.22; // baked-in squircle corners, matching the source logo
 
-  // bars: increasing height, bottoms aligned on a shared baseline
-  const baseline = size * 0.70;
-  const barW = size * 0.135;
-  const barGap = size * 0.045;
-  const bar1X = size * 0.305, bar1H = size * 0.13;
-  const bar2X = bar1X + barW + barGap, bar2H = size * 0.22;
-  const bar3X = bar2X + barW + barGap, bar3H = size * 0.32;
+  // bars: increasing height, bottoms aligned on a shared baseline, rounded tops
+  const baseline = size * 0.695;
+  const barW = size * 0.115;
+  const barGap = size * 0.05;
+  const barRR = size * 0.028;
+  const bar1X = size * 0.325, bar1H = size * 0.12;
+  const bar2X = bar1X + barW + barGap, bar2H = size * 0.205;
+  const bar3X = bar2X + barW + barGap, bar3H = size * 0.30;
   const bars = [
     [bar1X, baseline - bar1H, barW, bar1H],
     [bar2X, baseline - bar2H, barW, bar2H],
     [bar3X, baseline - bar3H, barW, bar3H],
   ];
 
-  // ascending line, clear of the bars, ending in a dot above the tallest one
-  const lineFrom = [size * 0.275, size * 0.545];
-  const lineTo = [size * 0.70, size * 0.255];
-  const lineWidth = size * 0.028;
-  const dot = [size * 0.72, size * 0.235];
-  const dotR = size * 0.045;
+  // gently curved ascending line, clear of the bars, ending in a dot above the tallest one
+  const lineFrom = [size * 0.305, size * 0.545];
+  const lineTo = [size * 0.665, size * 0.335];
+  const lineCtrl = [size * 0.4775, size * 0.395];
+  const lineWidth = size * 0.026;
+  const dot = [size * 0.685, size * 0.315];
+  const dotR = size * 0.042;
 
   function setPx(i, color, alpha) {
     px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = alpha;
@@ -110,9 +144,9 @@ function drawIcon(size, roundCorners) {
 
       let isMark = false;
       for (const [bx, by, bw, bh] of bars) {
-        if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) { isMark = true; break; }
+        if (inRoundedTopRect(x, y, bx, by, bw, bh, barRR)) { isMark = true; break; }
       }
-      if (!isMark && distToSegment(x, y, lineFrom[0], lineFrom[1], lineTo[0], lineTo[1]) < lineWidth / 2) isMark = true;
+      if (!isMark && distToCurve(x, y, lineFrom, lineCtrl, lineTo, 24) < lineWidth / 2) isMark = true;
       if (!isMark) {
         const ddx = x - dot[0], ddy = y - dot[1];
         if (ddx * ddx + ddy * ddy < dotR * dotR) isMark = true;
@@ -124,14 +158,14 @@ function drawIcon(size, roundCorners) {
 }
 
 const sizes = [
-  ['icon-192.png', 192, false],
-  ['icon-512.png', 512, false],
-  ['apple-touch-icon.png', 180, false],
-  ['favicon-32.png', 32, true],
+  ['icon-192.png', 192],
+  ['icon-512.png', 512],
+  ['apple-touch-icon.png', 180],
+  ['favicon-32.png', 32],
 ];
 
-for (const [name, size, roundCorners] of sizes) {
-  const rgba = drawIcon(size, roundCorners);
+for (const [name, size] of sizes) {
+  const rgba = drawIcon(size);
   const png = encodePNG(size, size, rgba);
   fs.writeFileSync(path.join(__dirname, name), png);
   console.log('wrote', name, size);
