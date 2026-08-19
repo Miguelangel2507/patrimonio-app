@@ -45,16 +45,14 @@ svg { display: block; }
 }
 
 /* ---------- app shell ----------
-   Everything below is a normal-flow flex column filling the exact viewport
-   (#app has height:100%, no child ever uses position:fixed for docking —
-   fixed + vh doesn't track iOS Safari's dynamic toolbar and leaves a gap
-   at the bottom). Only full-screen overlays (modals, bottom sheets) use
-   position:fixed, since those cover the whole viewport rather than
-   docking a thin bar to one edge. */
-/* Height comes from --app-vh (set in app.js from window.innerHeight), not a vh/dvh
-   unit — iOS has shipped several generations of viewport-unit bugs specifically for
-   standalone home-screen apps, and window.innerHeight is what's actually reliable. */
-#app { height: 100%; height: var(--app-vh, 100%); display: flex; flex-direction: column; background: var(--page-bg); }
+   #app is pinned to the real viewport with position:fixed;inset:0 — the same
+   technique the modals already use (and which never showed this bug). A fixed
+   element's inset is resolved by the compositor against the true visual
+   viewport/safe area directly; a height:100%/100vh block, or a JS-measured
+   window.innerHeight, both go through layout-viewport math that has shown
+   inconsistent standalone-PWA results on iOS. Inside, .screen/.tab-bar are
+   normal flex children — only the outer shell itself needs the fixed anchor. */
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--page-bg); }
 
 .onboarding { flex: 1; min-height: 0; overflow-y: auto; padding: calc(24px + var(--safe-top)) 20px 40px; -webkit-overflow-scrolling: touch; }
 

@@ -1993,17 +1993,21 @@
       document.body.appendChild(probe);
       const safeBottom = getComputedStyle(probe).paddingBottom;
       document.body.removeChild(probe);
+      const fixedProbe = document.createElement('div');
+      fixedProbe.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:1px;visibility:hidden';
+      document.body.appendChild(fixedProbe);
+      const fixedBottomY = fixedProbe.getBoundingClientRect().top;
+      document.body.removeChild(fixedProbe);
       const appRect = document.getElementById('app').getBoundingClientRect();
+      const stripRect = el.getBoundingClientRect();
       const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
       const vv = window.visualViewport;
       el.textContent =
-        'window.innerHeight=' + window.innerHeight +
-        ' | --app-vh=' + appVh.trim() +
-        ' | #app height=' + appRect.height.toFixed(1) +
-        ' | safe-area-bottom=' + safeBottom +
-        ' | visualViewport.height=' + (vv ? vv.height : 'n/a') +
-        ' | screen.height=' + screen.height +
-        ' | devicePixelRatio=' + window.devicePixelRatio;
+        'innerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height +
+        ' | fixed-bottom:0 lands at y=' + fixedBottomY + ' (should = innerH if they agree)' +
+        '\n#app rect=' + appRect.top.toFixed(0) + '..' + appRect.bottom.toFixed(0) +
+        ' | strip bottom=' + stripRect.bottom.toFixed(1) +
+        ' | safe-bottom=' + safeBottom + ' | dpr=' + window.devicePixelRatio;
     },
     render() {
       const s = this.state;
