@@ -3,7 +3,9 @@
 html, body {
   height: 100%;
   margin: 0;
-  overflow: hidden; /* only .screen / .modal-body / .bottom-sheet scroll; body never does */
+  /* No overflow:hidden here: it would clip the tab bar's safe-area padding-bottom
+     bleed short of the true edge. .screen / .modal-body / .bottom-sheet still do
+     their own internal overflow-y:auto scrolling regardless. */
   overscroll-behavior-y: none;
   background: oklch(96.5% 0.01 90);
 }
@@ -45,14 +47,13 @@ svg { display: block; }
 }
 
 /* ---------- app shell ----------
-   #app is pinned to the real viewport with position:fixed;inset:0 — the same
-   technique the modals already use (and which never showed this bug). A fixed
-   element's inset is resolved by the compositor against the true visual
-   viewport/safe area directly; a height:100%/100vh block, or a JS-measured
-   window.innerHeight, both go through layout-viewport math that has shown
-   inconsistent standalone-PWA results on iOS. Inside, .screen/.tab-bar are
-   normal flex children — only the outer shell itself needs the fixed anchor. */
-#app { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--page-bg); }
+   #app is a normal (non-fixed) flex column, height:100% of body. Deliberately
+   NOT position:fixed;inset:0 — that hard-caps the box to exactly
+   window.innerHeight, which left no room for the tab bar's own
+   padding-bottom:env(safe-area-inset-bottom) to push the rendered content past
+   that boundary and into the true safe area. Safe-area padding is designed to
+   let a background bleed into that zone; a hard-capped ancestor defeats it. */
+#app { height: 100%; display: flex; flex-direction: column; background: var(--page-bg); }
 
 .onboarding { flex: 1; min-height: 0; overflow-y: auto; padding: calc(24px + var(--safe-top)) 20px 40px; -webkit-overflow-scrolling: touch; }
 

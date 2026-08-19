@@ -2045,7 +2045,7 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>` : '';
+        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px calc(6px + env(safe-area-inset-bottom));white-space:pre-wrap"></div>` : '';
         html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;
