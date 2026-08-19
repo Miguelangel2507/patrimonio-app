@@ -1982,6 +1982,29 @@
   // Master render + action dispatch tables
   // ============================================================
   Object.assign(App, {
+    // Temporary on-screen diagnostic strip — pulled once the bottom-gap issue is
+    // confirmed fixed on a real device. Prints hard numbers instead of guesses.
+    DEBUG_VIEWPORT: true,
+    paintDebugStrip() {
+      const el = document.getElementById('debugStrip');
+      if (!el) return;
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;bottom:0;left:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden';
+      document.body.appendChild(probe);
+      const safeBottom = getComputedStyle(probe).paddingBottom;
+      document.body.removeChild(probe);
+      const appRect = document.getElementById('app').getBoundingClientRect();
+      const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
+      const vv = window.visualViewport;
+      el.textContent =
+        'window.innerHeight=' + window.innerHeight +
+        ' | --app-vh=' + appVh.trim() +
+        ' | #app height=' + appRect.height.toFixed(1) +
+        ' | safe-area-bottom=' + safeBottom +
+        ' | visualViewport.height=' + (vv ? vv.height : 'n/a') +
+        ' | screen.height=' + screen.height +
+        ' | devicePixelRatio=' + window.devicePixelRatio;
+    },
     render() {
       const s = this.state;
       const root = document.getElementById('app');
@@ -2003,9 +2026,11 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${s.modal ? Render.modal(this) : ''}`;
+        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>` : '';
+        html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;
+      if (App.DEBUG_VIEWPORT) App.paintDebugStrip();
 
       const newScreen = root.querySelector('.screen'); if (newScreen) newScreen.scrollTop = savedScroll.screen;
       const newModalBody = root.querySelector('.modal-body'); if (newModalBody) newModalBody.scrollTop = savedScroll.modal;
@@ -2159,6 +2184,15 @@
     root.addEventListener('scroll', (e) => {
       if (e.target.classList && e.target.classList.contains('account-scroller')) App.onAccountsScroll(e);
     }, true);
+
+    // Real viewport height, measured directly instead of trusting vh/dvh units —
+    // iOS has shipped several viewport-unit bugs specifically for standalone
+    // home-screen apps, where 100vh/100dvh doesn't equal window.innerHeight.
+    const setAppVh = () => document.documentElement.style.setProperty('--app-vh', window.innerHeight + 'px');
+    setAppVh();
+    window.addEventListener('resize', setAppVh);
+    window.addEventListener('orientationchange', setAppVh);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', setAppVh);
 
     App.init();
 

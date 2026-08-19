@@ -1,5 +1,5 @@
 // Bump this on every deploy — forces old cached entries to be purged on activate.
-const CACHE_VERSION = 'patrimonio-v2';
+const CACHE_VERSION = 'patrimonio-v3';
 const APP_SHELL = [
   './',
   './index.html',
