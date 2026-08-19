@@ -1993,7 +1993,7 @@
       if (document.getElementById('rawBottomProbe')) return;
       const el = document.createElement('div');
       el.id = 'rawBottomProbe';
-      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:#ff9500;color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:rgba(255,149,0,0.999);color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none';
       el.innerHTML = 'RAW position:fixed;bottom:0 TEST — direct child of &lt;body&gt;, NOT inside #app<br>(if this is cut off before the true screen edge, it is a hard platform limit)';
       document.body.appendChild(el);
     },
@@ -2045,7 +2045,7 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px calc(6px + env(safe-area-inset-bottom));white-space:pre-wrap"></div>` : '';
+        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:rgba(255,0,68,0.999);color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px calc(6px + env(safe-area-inset-bottom));white-space:pre-wrap"></div>` : '';
         html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;

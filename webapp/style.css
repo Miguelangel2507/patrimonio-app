@@ -7,7 +7,12 @@ html, body {
      bleed short of the true edge. .screen / .modal-body / .bottom-sheet still do
      their own internal overflow-y:auto scrolling regardless. */
   overscroll-behavior-y: none;
-  background: oklch(96.5% 0.01 90);
+  /* Safari 26 standalone-PWA bug: a fully opaque (alpha 1) background on a layer
+     near the bottom safe area gets clipped short of the true edge; the exact same
+     color at alpha 0.999 (imperceptible) routes through the compositor instead and
+     paints correctly all the way down. See:
+     https://www.edoardolunardi.dev/blog/safari-26-and-the-strange-case-of-fixed-overlays */
+  background: oklch(96.5% 0.01 90 / 0.999);
 }
 body {
   font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
@@ -36,8 +41,8 @@ svg { display: block; }
   --ink: oklch(20% 0.01 90);
   --ink-soft: oklch(50% 0.01 90);
   --ink-ter: oklch(60% 0.01 90);
-  --page-bg: oklch(96.5% 0.01 90);
-  --card-bg: #fff;
+  --page-bg: oklch(96.5% 0.01 90 / 0.999); /* alpha<1: works around the Safari 26 opaque-fixed-layer clip bug */
+  --card-bg: rgba(255, 255, 255, 0.999);
   --card-shadow: 0 4px 14px oklch(25% 0.03 90 / 0.10);
   --neutral-chip: oklch(93% 0.005 90);
   --neutral-row: oklch(96% 0.003 90);
@@ -159,7 +164,7 @@ textarea.field-input { resize: none; }
 .tab-bar {
   position: relative; flex-shrink: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-around;
-  padding: 10px 12px calc(18px + var(--safe-bottom)); background: #fff;
+  padding: 10px 12px calc(18px + var(--safe-bottom)); background: rgba(255, 255, 255, 0.999);
   border-top: 1px solid var(--divider);
 }
 .tab-item { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--ink-ter); background: none; border: none; padding: 4px 8px; }
@@ -187,7 +192,7 @@ textarea.field-input { resize: none; }
 .bottom-sheet-wrap { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; justify-content: flex-end; }
 .bottom-sheet-backdrop { position: absolute; inset: 0; background: oklch(20% 0.01 90 / 0.55); border: none; padding: 0; }
 .bottom-sheet {
-  position: relative; background: #fff; border-radius: 28px 28px 0 0; padding: 26px 20px calc(34px + var(--safe-bottom));
+  position: relative; background: rgba(255, 255, 255, 0.999); border-radius: 28px 28px 0 0; padding: 26px 20px calc(34px + var(--safe-bottom));
   max-height: 82%; overflow-y: auto;
 }
 
