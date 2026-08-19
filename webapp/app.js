@@ -1998,6 +1998,13 @@
     paintDebugStrip() {
       const el = document.getElementById('debugStrip');
       if (!el) return;
+      // Fill with a same-length placeholder FIRST and force layout, so the
+      // strip's real flex height (and therefore everything measured below,
+      // like the tab bar's bottom edge) reflects what actually renders —
+      // measuring an empty strip understates its height and throws off
+      // every downstream number.
+      el.textContent = 'GAP xxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxx xxx=xxxx xxx=xxx xxxxxxx=xxx xxx=x | xxxxx-xxxxxx:x xxxxx xx x=xxxx (xxxxxx = xxxxx xx xxxx xxxxx)\n#xxx xxxx=xxx..xxx | xxx-xxx xxxxxx=xxx.x | xxxxx xxxxxx=xxx.x | xxxx-xxxxx xxx=xxx.x\nxxxx-xxxxxx=xxxx | --xxx-xx=xxxxx';
+      void el.offsetHeight;
       const probe = document.createElement('div');
       probe.style.cssText = 'position:fixed;bottom:0;left:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden';
       document.body.appendChild(probe);
@@ -2016,8 +2023,10 @@
       const tabBarRect = tabBarEl ? tabBarEl.getBoundingClientRect() : null;
       const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
       const vv = window.visualViewport;
+      const gap = tabBarRect ? (window.innerHeight - tabBarRect.bottom).toFixed(1) : 'n/a';
       el.textContent =
-        'innerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height + ' dpr=' + window.devicePixelRatio +
+        'GAP tab-bar-bottom..innerH = ' + gap + 'px' +
+        '\ninnerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height + ' dpr=' + window.devicePixelRatio +
         ' | fixed-bottom:0 lands at y=' + fixedBottomY + ' (should = innerH if they agree)' +
         '\n#app rect=' + appRect.top.toFixed(0) + '..' + appRect.bottom.toFixed(0) +
         (tabBarRect ? ' | tab-bar bottom=' + tabBarRect.bottom.toFixed(1) : '') +
