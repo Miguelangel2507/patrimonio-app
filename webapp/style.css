@@ -164,7 +164,7 @@ textarea.field-input { resize: none; }
 .tab-bar {
   position: relative; flex-shrink: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-around;
-  padding: 10px 12px calc(6px + var(--safe-bottom)); background: rgba(255, 255, 255, 0.999);
+  padding: 10px 12px var(--safe-bottom); background: rgba(255, 255, 255, 0.999);
   border-top: 1px solid var(--divider);
 }
 .tab-item { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--ink-ter); background: none; border: none; padding: 4px 8px; }
