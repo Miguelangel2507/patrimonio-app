@@ -1984,17 +1984,15 @@
   Object.assign(App, {
     // Temporary on-screen diagnostic strip — pulled once the bottom-gap issue is
     // confirmed fixed on a real device. Prints hard numbers instead of guesses.
-    DEBUG_VIEWPORT: false,
+    DEBUG_VIEWPORT: true,
     // Appended directly to <body>, as a sibling of #app rather than a descendant —
-    // rules out any nested-fixed-inside-fixed containing-block quirk in #app itself
-    // (#app is also position:fixed, and while spec says that shouldn't matter for a
-    // fixed descendant, WebKit has had real bugs here before).
+    // rules out any nested-fixed-inside-fixed containing-block quirk in #app itself.
+    // Kept thin (28px) and pointer-events:none so it can't block any real button.
     ensureRawBottomProbe() {
       if (document.getElementById('rawBottomProbe')) return;
       const el = document.createElement('div');
       el.id = 'rawBottomProbe';
-      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:rgba(255,149,0,0.999);color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none';
-      el.innerHTML = 'RAW position:fixed;bottom:0 TEST — direct child of &lt;body&gt;, NOT inside #app<br>(if this is cut off before the true screen edge, it is a hard platform limit)';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:28px;z-index:99999;background:rgba(255,149,0,0.999);pointer-events:none';
       document.body.appendChild(el);
     },
     paintDebugStrip() {
@@ -2014,15 +2012,18 @@
       const stripRect = el.getBoundingClientRect();
       const probeEl = document.getElementById('rawBottomProbe');
       const probeRect = probeEl ? probeEl.getBoundingClientRect() : null;
+      const tabBarEl = document.querySelector('.tab-bar');
+      const tabBarRect = tabBarEl ? tabBarEl.getBoundingClientRect() : null;
       const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
       const vv = window.visualViewport;
       el.textContent =
-        'innerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height +
+        'innerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height + ' dpr=' + window.devicePixelRatio +
         ' | fixed-bottom:0 lands at y=' + fixedBottomY + ' (should = innerH if they agree)' +
         '\n#app rect=' + appRect.top.toFixed(0) + '..' + appRect.bottom.toFixed(0) +
+        (tabBarRect ? ' | tab-bar bottom=' + tabBarRect.bottom.toFixed(1) : '') +
         ' | strip bottom=' + stripRect.bottom.toFixed(1) +
-        (probeRect ? ' | body-probe bottom=' + probeRect.bottom.toFixed(1) : '') +
-        ' | safe-bottom=' + safeBottom + ' | dpr=' + window.devicePixelRatio;
+        (probeRect ? ' | body-probe top=' + probeRect.top.toFixed(1) : '') +
+        '\nsafe-bottom=' + safeBottom + ' | --app-vh=' + appVh;
     },
     render() {
       const s = this.state;
