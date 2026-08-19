@@ -1,5 +1,6 @@
-// One-off icon generator: draws a green rounded-square badge with a stylised "€" glyph,
-// encodes as PNG by hand (zlib only, no image deps available in this environment).
+// One-off icon generator: draws a navy rounded-square badge with a white
+// ascending-line + bar-chart mark ("Finzen" icon), encodes as PNG by hand
+// (zlib only, no image deps available in this environment).
 const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
@@ -46,16 +47,44 @@ function encodePNG(width, height, rgba) {
   return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
 }
 
-function drawIcon(size) {
+// distance from point (px,py) to segment (ax,ay)-(bx,by)
+function distToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax, aby = by - ay;
+  const apx = px - ax, apy = py - ay;
+  const abLen2 = abx * abx + aby * aby;
+  let t = abLen2 > 0 ? (apx * abx + apy * aby) / abLen2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + abx * t, cy = ay + aby * t;
+  const dx = px - cx, dy = py - cy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function drawIcon(size, roundCorners) {
   const px = new Uint8ClampedArray(size * size * 4);
-  const bg = [10, 132, 90]; // green, close to oklch(58% 0.15 155)
-  const bgDark = [8, 110, 75];
+  const bg = [22, 35, 61];      // navy, top
+  const bgDark = [14, 22, 40];  // navy, bottom (subtle vertical gradient)
   const white = [255, 255, 255];
-  const r = 0; // no corner rounding: iOS/Android apply their own icon mask
-  const cx = size / 2, cy = size / 2;
-  const R = size * 0.30, T = size * 0.085;
-  const barHalf = size * 0.038;
-  const barOffset = size * 0.155;
+  const r = roundCorners ? size * 0.22 : 0; // OS applies its own mask on real app icons
+
+  // bars: increasing height, bottoms aligned on a shared baseline
+  const baseline = size * 0.70;
+  const barW = size * 0.135;
+  const barGap = size * 0.045;
+  const bar1X = size * 0.305, bar1H = size * 0.13;
+  const bar2X = bar1X + barW + barGap, bar2H = size * 0.22;
+  const bar3X = bar2X + barW + barGap, bar3H = size * 0.32;
+  const bars = [
+    [bar1X, baseline - bar1H, barW, bar1H],
+    [bar2X, baseline - bar2H, barW, bar2H],
+    [bar3X, baseline - bar3H, barW, bar3H],
+  ];
+
+  // ascending line, clear of the bars, ending in a dot above the tallest one
+  const lineFrom = [size * 0.275, size * 0.545];
+  const lineTo = [size * 0.70, size * 0.255];
+  const lineWidth = size * 0.028;
+  const dot = [size * 0.72, size * 0.235];
+  const dotR = size * 0.045;
 
   function setPx(i, color, alpha) {
     px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = alpha;
@@ -71,7 +100,6 @@ function drawIcon(size) {
       if (dx > 0 && dy > 0 && dx * dx + dy * dy > r * r) inside = false;
       if (!inside) { setPx(i, white, 0); continue; }
 
-      // subtle vertical gradient background
       const t = y / size;
       const base = [
         Math.round(bg[0] + (bgDark[0] - bg[0]) * t),
@@ -80,27 +108,30 @@ function drawIcon(size) {
       ];
       setPx(i, base, 255);
 
-      // euro glyph: ring (open "C") + two bars, antialiased-ish via distance thresholds
-      const ddx = x - cx, ddy = y - cy;
-      const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-      const isRing = dist > R - T && dist < R && x < cx + R * 0.42;
-      const inBar1 = Math.abs(ddy - (-barOffset)) < barHalf && ddx > -R * 1.15 && ddx < R * 0.18;
-      const inBar2 = Math.abs(ddy - barOffset) < barHalf && ddx > -R * 1.15 && ddx < R * 0.18;
-      if (isRing || inBar1 || inBar2) setPx(i, white, 255);
+      let isMark = false;
+      for (const [bx, by, bw, bh] of bars) {
+        if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) { isMark = true; break; }
+      }
+      if (!isMark && distToSegment(x, y, lineFrom[0], lineFrom[1], lineTo[0], lineTo[1]) < lineWidth / 2) isMark = true;
+      if (!isMark) {
+        const ddx = x - dot[0], ddy = y - dot[1];
+        if (ddx * ddx + ddy * ddy < dotR * dotR) isMark = true;
+      }
+      if (isMark) setPx(i, white, 255);
     }
   }
   return Buffer.from(px.buffer);
 }
 
 const sizes = [
-  ['icon-192.png', 192],
-  ['icon-512.png', 512],
-  ['apple-touch-icon.png', 180],
-  ['favicon-32.png', 32],
+  ['icon-192.png', 192, false],
+  ['icon-512.png', 512, false],
+  ['apple-touch-icon.png', 180, false],
+  ['favicon-32.png', 32, true],
 ];
 
-for (const [name, size] of sizes) {
-  const rgba = drawIcon(size);
+for (const [name, size, roundCorners] of sizes) {
+  const rgba = drawIcon(size, roundCorners);
   const png = encodePNG(size, size, rgba);
   fs.writeFileSync(path.join(__dirname, name), png);
   console.log('wrote', name, size);

@@ -1,6 +1,6 @@
 {
-  "name": "Patrimonio",
-  "short_name": "Patrimonio",
+  "name": "Finzen",
+  "short_name": "Finzen",
   "description": "Tu patrimonio, cuentas, gastos e inversiones en una sola app.",
   "start_url": "./index.html",
   "scope": "./",
