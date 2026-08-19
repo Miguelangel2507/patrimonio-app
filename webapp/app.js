@@ -1985,6 +1985,18 @@
     // Temporary on-screen diagnostic strip — pulled once the bottom-gap issue is
     // confirmed fixed on a real device. Prints hard numbers instead of guesses.
     DEBUG_VIEWPORT: true,
+    // Appended directly to <body>, as a sibling of #app rather than a descendant —
+    // rules out any nested-fixed-inside-fixed containing-block quirk in #app itself
+    // (#app is also position:fixed, and while spec says that shouldn't matter for a
+    // fixed descendant, WebKit has had real bugs here before).
+    ensureRawBottomProbe() {
+      if (document.getElementById('rawBottomProbe')) return;
+      const el = document.createElement('div');
+      el.id = 'rawBottomProbe';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:#ff9500;color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none';
+      el.innerHTML = 'RAW position:fixed;bottom:0 TEST — direct child of &lt;body&gt;, NOT inside #app<br>(if this is cut off before the true screen edge, it is a hard platform limit)';
+      document.body.appendChild(el);
+    },
     paintDebugStrip() {
       const el = document.getElementById('debugStrip');
       if (!el) return;
@@ -2000,6 +2012,8 @@
       document.body.removeChild(fixedProbe);
       const appRect = document.getElementById('app').getBoundingClientRect();
       const stripRect = el.getBoundingClientRect();
+      const probeEl = document.getElementById('rawBottomProbe');
+      const probeRect = probeEl ? probeEl.getBoundingClientRect() : null;
       const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
       const vv = window.visualViewport;
       el.textContent =
@@ -2007,6 +2021,7 @@
         ' | fixed-bottom:0 lands at y=' + fixedBottomY + ' (should = innerH if they agree)' +
         '\n#app rect=' + appRect.top.toFixed(0) + '..' + appRect.bottom.toFixed(0) +
         ' | strip bottom=' + stripRect.bottom.toFixed(1) +
+        (probeRect ? ' | body-probe bottom=' + probeRect.bottom.toFixed(1) : '') +
         ' | safe-bottom=' + safeBottom + ' | dpr=' + window.devicePixelRatio;
     },
     render() {
@@ -2030,12 +2045,11 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>
-          <div style="position:fixed;left:0;right:0;bottom:0;height:200px;z-index:99999;background:#ff9500;color:#000;font:bold 13px/1.4 ui-monospace,monospace;padding:8px;box-sizing:border-box;pointer-events:none">RAW position:fixed;bottom:0 TEST<br>(no layout system involved — if this box is cut off before the true screen edge, no CSS can reach further)</div>` : '';
+        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:#ff0044;color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px;white-space:pre-wrap"></div>` : '';
         html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;
-      if (App.DEBUG_VIEWPORT) App.paintDebugStrip();
+      if (App.DEBUG_VIEWPORT) { App.ensureRawBottomProbe(); App.paintDebugStrip(); }
 
       const newScreen = root.querySelector('.screen'); if (newScreen) newScreen.scrollTop = savedScroll.screen;
       const newModalBody = root.querySelector('.modal-body'); if (newModalBody) newModalBody.scrollTop = savedScroll.modal;
