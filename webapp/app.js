@@ -1984,7 +1984,7 @@
   Object.assign(App, {
     // Temporary on-screen diagnostic strip — pulled once the bottom-gap issue is
     // confirmed fixed on a real device. Prints hard numbers instead of guesses.
-    DEBUG_VIEWPORT: true,
+    DEBUG_VIEWPORT: false,
     // Appended directly to <body>, as a sibling of #app rather than a descendant —
     // rules out any nested-fixed-inside-fixed containing-block quirk in #app itself
     // (#app is also position:fixed, and while spec says that shouldn't matter for a
