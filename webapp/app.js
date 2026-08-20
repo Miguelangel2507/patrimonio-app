@@ -299,8 +299,7 @@
       this.state.monthlyCloses = [...this.state.monthlyCloses, { month: monthKey, market, invested, perFund }];
     },
     // Net cash into/out of the funds (buys positive, sells negative) up to but
-    // not including dateISO — used to value a month's start when no real close
-    // exists for the prior month end (valuing "at cost", i.e. a flat estimate).
+    // not including dateISO.
     investedAsOfDate(dateISO) {
       let invested = 0;
       this.state.investments.forEach(f => {
@@ -308,10 +307,29 @@
       });
       return invested;
     },
+    // Best-effort market value at a date when there's no real monthlyClose:
+    // each fund is valued at its units held as of that date times the price
+    // from its most recent purchase at or before that date — a real observed
+    // VL, just not a same-day snapshot. This is what "estimado con el precio
+    // de tus compras" means; valuing at pure cost (assuming flat 0% growth)
+    // would silently fold any real prior movement into whatever month finally
+    // gets a real snapshot to compare against.
+    marketValueAsOfDate(dateISO) {
+      let total = 0;
+      this.state.investments.forEach(f => {
+        const ops = (f.ops || []).filter(o => o.date < dateISO).sort((a, b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+        if (!ops.length) return;
+        let units = 0;
+        ops.forEach(o => { units += (o.type === 'buy' ? o.units : -o.units); });
+        total += units * ops[ops.length - 1].price;
+      });
+      return total;
+    },
     // Modified Dietz monthly return for 'YYYY-MM'. Real BMV/EMV come from
-    // monthlyCloses when available; otherwise BMV falls back to cost-basis as of
-    // month start, and a fully-elapsed month with no real close is valued flat
-    // (EMV = BMV + net contributions), i.e. an honest "unknown, assumed 0%".
+    // monthlyCloses when available; otherwise each end falls back to
+    // marketValueAsOfDate. The "real" flag (dot in the UI) reflects only
+    // whether THIS month's end has a real snapshot — a month can have a real
+    // end and an estimated start at the same time.
     monthlyReturn(monthKey) {
       const [y, m] = monthKey.split('-').map(Number);
       const monthStart = new Date(y, m - 1, 1);
@@ -324,7 +342,8 @@
       const thisClose = closes.find(c => c.month === monthKey);
       const now = new Date();
       const isCurrentMonth = now.getFullYear() === y && now.getMonth() === m - 1;
-      const bmv = priorClose ? priorClose.market : this.investedAsOfDate(monthStartISO);
+      const bmv = priorClose ? priorClose.market : this.marketValueAsOfDate(monthStartISO);
+
       let cfTotal = 0, weightedCf = 0;
       this.state.investments.forEach(f => {
         (f.ops || []).forEach(op => {
@@ -337,10 +356,18 @@
           }
         });
       });
+
       let emv, real;
       if (thisClose) { emv = thisClose.market; real = true; }
       else if (isCurrentMonth) { emv = this.state.investments.reduce((a, f) => a + f.units * f.currentPrice, 0); real = false; }
-      else if (monthEnd < now) { emv = bmv + cfTotal; real = false; }
+      else if (monthEnd < now) {
+        // Valued at the last known purchase price up to and including this
+        // month's last day — NOT bmv + cfTotal, which is 0% by construction
+        // and would silently discard any price movement the ops did capture.
+        const dayAfterMonthEnd = new Date(monthEnd); dayAfterMonthEnd.setDate(dayAfterMonthEnd.getDate() + 1);
+        emv = this.marketValueAsOfDate(dayAfterMonthEnd.toISOString().slice(0, 10));
+        real = false;
+      }
       else { return { returnPct: null, real: false, hasData: false }; }
       const denom = bmv + weightedCf;
       const hasData = bmv > 1e-6 || Math.abs(cfTotal) > 1e-6 || emv > 1e-6;
