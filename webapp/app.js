@@ -215,7 +215,7 @@
         jornal: 0, editingJornal: false, editingJornalValue: '',
         recurringInlineOpen: false, editingRecurringId: null,
         recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
-        monthlyCloses: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null,
+        monthlyCloses: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null, fondosOpen: true,
       };
     },
 
@@ -390,6 +390,7 @@
       const investments = this.state.investments.map(f => f.id === fund.id ? { ...f, priceSource: f.priceSource === 'manual' ? 'auto' : 'manual' } : f);
       this.setState({ investments });
     },
+    toggleFondosList() { this.setState({ fondosOpen: !this.state.fondosOpen }); },
     // JSONP fetch of the public Google Sheet (avoids CORS entirely — the gviz
     // endpoint's documented cross-origin mechanism is a script tag + callback,
     // not a fetch()-friendly response).
@@ -398,8 +399,25 @@
       this._sheetFetchInFlight = true;
       this.setState({ sheetPricesStatus: 'loading' });
       const cbName = '__gvizCb' + Date.now();
-      const cleanup = () => { delete window[cbName]; if (script.parentNode) script.remove(); this._sheetFetchInFlight = false; };
+      let settled = false;
+      const cleanup = () => {
+        settled = true;
+        clearTimeout(timer);
+        delete window[cbName];
+        if (script.parentNode) script.remove();
+        this._sheetFetchInFlight = false;
+      };
+      // A private (not link-shared) sheet redirects to a Google login page instead
+      // of erroring — that loads "successfully" as far as the <script> tag is
+      // concerned, so it never calls our callback and onerror never fires either.
+      // Without this timeout the button would just sit on "Actualizando…" forever.
+      const timer = setTimeout(() => {
+        if (settled) return;
+        this.setState({ sheetPricesStatus: 'timeout' });
+        cleanup();
+      }, 8000);
       window[cbName] = (json) => {
+        if (settled) return;
         try {
           const rows = (json.table && json.table.rows) || [];
           const prices = {};
@@ -421,7 +439,7 @@
       };
       const script = document.createElement('script');
       script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:json;responseHandler=' + cbName;
-      script.onerror = () => { this.setState({ sheetPricesStatus: 'error' }); cleanup(); };
+      script.onerror = () => { if (!settled) { this.setState({ sheetPricesStatus: 'error' }); cleanup(); } };
       document.body.appendChild(script);
     },
 
@@ -1709,6 +1727,7 @@
       </div>` : '';
 
     const priceStatusLabel = s.sheetPricesStatus === 'loading' ? 'Actualizando precios…'
+      : s.sheetPricesStatus === 'timeout' ? 'Sin respuesta — comprueba que la hoja esté compartida como "Cualquiera con el enlace"'
       : s.sheetPricesStatus === 'error' ? 'No se pudieron actualizar los precios'
       : s.sheetPricesUpdatedAt ? ('Precios actualizados · ' + new Date(s.sheetPricesUpdatedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }))
       : 'Precios sin actualizar';
@@ -1737,15 +1756,20 @@
         <span style="font-size:11px;font-weight:700;color:oklch(58% 0.15 155)">Actualizar ↻</span>
       </button>
 
+      ${heatmapHtml}
+
       ${pendingHtml}
 
-      <div class="section-title" style="margin-top:${dueRules.length ? '24' : '20'}px">Tus fondos</div>
+      <button type="button" class="row-flex between" style="margin-top:${dueRules.length ? '24' : '20'}px;width:100%;border:none;background:none;cursor:pointer;padding:0" data-action="toggleFondosList">
+        <div class="section-title">Tus fondos</div>
+        ${s.fondosOpen ? Icons.chevronUp('oklch(50% 0.01 90)') : Icons.chevronDown('oklch(50% 0.01 90)')}
+      </button>
+      ${s.fondosOpen ? `
       <div class="card" style="margin-top:12px;padding:12px;display:flex;flex-direction:column;gap:6px">
         ${fundsRows}
-      </div>
+      </div>` : ''}
 
       ${plansHtml}
-      ${heatmapHtml}
       ${annualChartHtml}
     </div>`;
   };
@@ -2641,6 +2665,7 @@
     navInvestYearNext: () => App.navInvestYear(1),
     refreshSheetPrices: () => App.fetchSheetPrices(),
     toggleFundPriceSource: () => App.toggleFundPriceSource(),
+    toggleFondosList: () => App.toggleFondosList(),
     toggleCatInline: () => App.toggleCatInline(),
     completeOnboarding: () => App.completeOnboarding(),
     selectTxType: (id, value) => App.setTxType(value),
