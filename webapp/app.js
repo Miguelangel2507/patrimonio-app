@@ -25,6 +25,7 @@
     sub: { label: 'Suscripción', catName: 'Suscripciones', note: '' },
   };
   const STORAGE_KEY = 'patrimonio_app_v1';
+  const SHEET_ID = '1HH2NiaaXDIKJwmATv3Ofk0mBmfBhwUxDbjwpRrTHBAw';
 
   // ============================================================
   // Small helpers
@@ -40,6 +41,10 @@
   }
   function sumAmt(list) { return list.reduce((a, t) => a + t.amount, 0); }
   function parseNum(s) { const n = parseFloat(String(s || '0').replace(/\./g, '').replace(',', '.')); return isNaN(n) ? 0 : n; }
+  // Inverse of parseNum: format a JS number the way these comma-decimal inputs
+  // expect, so prefilling a field programmatically round-trips correctly
+  // (a raw String(n) with a "." would be misread by parseNum as a thousands separator).
+  function numToInputStr(n) { return String(n).replace('.', ','); }
   function esc(str) {
     return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -194,7 +199,7 @@
         accForm: { name: '', type: 'banco', balance: '', isDebt: false, color: PALETTE[0] }, editingAccountId: null,
         addMoneyAmount: '', addMoneyNote: '', addMoneyAccountId: '',
         transferFrom: '', transferTo: '', transferAmount: '',
-        activeFundId: null, fundAction: null, fundActionAmount: '', fundActionPrice: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: '',
+        activeFundId: null, fundAction: null, fundActionAmount: '', fundActionPrice: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: '', fundActionDate: todayISO(),
         editingPlanId: null, planEditAmount: '', planEditDay: '', planEditFreq: 'monthly', planEditAccountId: '',
         editingPrice: false, editingPriceValue: '',
         statsTab: 'income', statsPeriod: 'month', statsRef: todayISO(),
@@ -205,12 +210,12 @@
         txSearch: '', txFilter: 'all',
         catTab: 'expense',
         catInlineOpen: false,
-        liquidezOpen: true, fondosOpen: true,
         editingTxId: null, txEditAmount: '', txEditDate: '', txEditCategoryId: '', txEditAccountId: '', txEditNote: '',
         editingCategoryId: null, catKind: 'daily', catBudgetType: 'amount', catBudgetValue: '', catBudgetReturnTo: null,
         jornal: 0, editingJornal: false, editingJornalValue: '',
         recurringInlineOpen: false, editingRecurringId: null,
         recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
+        monthlyCloses: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null,
       };
     },
 
@@ -222,6 +227,7 @@
       } catch (e) {}
       this.syncSnapshots();
       this.render();
+      this.fetchSheetPrices();
     },
 
     // setState merges a patch (object) into state, commits (persist + snapshot sync),
@@ -243,7 +249,7 @@
         accounts: s.accounts, transactions: s.transactions, categories: s.categories,
         recurringRules: s.recurringRules, investments: s.investments,
         netWorthHistory: s.netWorthHistory, investmentHistory: s.investmentHistory,
-        jornal: s.jornal,
+        jornal: s.jornal, monthlyCloses: s.monthlyCloses,
       };
     },
     persist() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.pickPersisted())); } catch (e) {} },
@@ -270,9 +276,127 @@
       if (!nwChanged && !iChanged) return;
       this.state.netWorthHistory = (last && last.date === today) ? hist.slice(0, -1).concat([{ date: today, value: nw }]) : hist.concat([{ date: today, value: nw }]);
       this.state.investmentHistory = (ilast && ilast.date === today) ? ihist.slice(0, -1).concat([{ date: today, invested: investedTotal, market: marketTotal }]) : ihist.concat([{ date: today, invested: investedTotal, market: marketTotal }]);
+      this.captureMonthlyCloseIfNeeded();
       this.persist();
     },
     syncSnapshots() { this.syncSnapshotsQuiet(); },
+
+    // Automatic "real close" snapshot: only fires when the app happens to be open
+    // on the actual last calendar day of a month, capturing each fund's live VL.
+    // Months the app wasn't open for at month-end have no real close, and the
+    // monthly-return math below falls back to a cost-basis (flat) estimate for them.
+    captureMonthlyCloseIfNeeded() {
+      if (!this.state.investments.length) return;
+      const now = new Date();
+      const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      if (now.getDate() !== lastDayOfMonth) return;
+      const monthKey = todayISO().slice(0, 7);
+      if (this.state.monthlyCloses.some(m => m.month === monthKey)) return;
+      const perFund = {};
+      this.state.investments.forEach(f => { perFund[f.id] = { units: f.units, price: f.currentPrice }; });
+      const market = this.state.investments.reduce((a, f) => a + f.units * f.currentPrice, 0);
+      const invested = this.state.investments.reduce((a, f) => a + f.totalInvested, 0);
+      this.state.monthlyCloses = [...this.state.monthlyCloses, { month: monthKey, market, invested, perFund }];
+    },
+    // Net cash into/out of the funds (buys positive, sells negative) up to but
+    // not including dateISO — used to value a month's start when no real close
+    // exists for the prior month end (valuing "at cost", i.e. a flat estimate).
+    investedAsOfDate(dateISO) {
+      let invested = 0;
+      this.state.investments.forEach(f => {
+        (f.ops || []).forEach(op => { if (op.date < dateISO) invested += (op.type === 'buy' ? op.amount : -op.amount); });
+      });
+      return invested;
+    },
+    // Modified Dietz monthly return for 'YYYY-MM'. Real BMV/EMV come from
+    // monthlyCloses when available; otherwise BMV falls back to cost-basis as of
+    // month start, and a fully-elapsed month with no real close is valued flat
+    // (EMV = BMV + net contributions), i.e. an honest "unknown, assumed 0%".
+    monthlyReturn(monthKey) {
+      const [y, m] = monthKey.split('-').map(Number);
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = new Date(y, m, 0);
+      const monthStartISO = monthStart.toISOString().slice(0, 10);
+      const monthEndISO = monthEnd.toISOString().slice(0, 10);
+      const daysInMonth = monthEnd.getDate();
+      const closes = this.state.monthlyCloses;
+      const priorClose = closes.filter(c => c.month < monthKey).sort((a, b) => a.month < b.month ? -1 : 1).pop();
+      const thisClose = closes.find(c => c.month === monthKey);
+      const now = new Date();
+      const isCurrentMonth = now.getFullYear() === y && now.getMonth() === m - 1;
+      const bmv = priorClose ? priorClose.market : this.investedAsOfDate(monthStartISO);
+      let cfTotal = 0, weightedCf = 0;
+      this.state.investments.forEach(f => {
+        (f.ops || []).forEach(op => {
+          if (op.date >= monthStartISO && op.date <= monthEndISO) {
+            const signed = op.type === 'buy' ? op.amount : -op.amount;
+            const d = new Date(op.date + 'T00:00:00');
+            const daysRemaining = daysInMonth - d.getDate() + 1;
+            cfTotal += signed;
+            weightedCf += signed * (daysRemaining / daysInMonth);
+          }
+        });
+      });
+      let emv, real;
+      if (thisClose) { emv = thisClose.market; real = true; }
+      else if (isCurrentMonth) { emv = this.state.investments.reduce((a, f) => a + f.units * f.currentPrice, 0); real = false; }
+      else if (monthEnd < now) { emv = bmv + cfTotal; real = false; }
+      else { return { returnPct: null, real: false, hasData: false }; }
+      const denom = bmv + weightedCf;
+      const hasData = bmv > 1e-6 || Math.abs(cfTotal) > 1e-6 || emv > 1e-6;
+      const returnPct = hasData && denom > 1e-6 ? ((emv - bmv - cfTotal) / denom) * 100 : (hasData ? 0 : null);
+      return { returnPct, real, hasData };
+    },
+    navInvestYear(dir) { this.setState({ investYear: this.state.investYear + dir }); },
+    // Chains the year's monthly Modified Dietz returns; months with no data
+    // (nothing invested yet) are skipped rather than counted as 0%.
+    annualReturn(year) {
+      let compound = 1, any = false;
+      for (let m = 1; m <= 12; m++) {
+        const r = this.monthlyReturn(year + '-' + String(m).padStart(2, '0'));
+        if (r.hasData && r.returnPct !== null) { compound *= (1 + r.returnPct / 100); any = true; }
+      }
+      return any ? (compound - 1) * 100 : null;
+    },
+    toggleFundPriceSource() {
+      const fund = this.currentFund(); if (!fund) return;
+      const investments = this.state.investments.map(f => f.id === fund.id ? { ...f, priceSource: f.priceSource === 'manual' ? 'auto' : 'manual' } : f);
+      this.setState({ investments });
+    },
+    // JSONP fetch of the public Google Sheet (avoids CORS entirely — the gviz
+    // endpoint's documented cross-origin mechanism is a script tag + callback,
+    // not a fetch()-friendly response).
+    fetchSheetPrices() {
+      if (this._sheetFetchInFlight) return;
+      this._sheetFetchInFlight = true;
+      this.setState({ sheetPricesStatus: 'loading' });
+      const cbName = '__gvizCb' + Date.now();
+      const cleanup = () => { delete window[cbName]; if (script.parentNode) script.remove(); this._sheetFetchInFlight = false; };
+      window[cbName] = (json) => {
+        try {
+          const rows = (json.table && json.table.rows) || [];
+          const prices = {};
+          rows.forEach(row => {
+            const c = row.c || [];
+            const isin = c[0] && c[0].v != null ? String(c[0].v).trim() : '';
+            const vlCell = c[2];
+            const vl = vlCell && typeof vlCell.v === 'number' ? vlCell.v : null;
+            if (isin && vl !== null) prices[isin] = vl;
+          });
+          const investments = this.state.investments.map(f => {
+            if (f.priceSource === 'manual') return f;
+            const isin = (f.isin || '').trim();
+            return (isin && prices[isin] !== undefined) ? { ...f, currentPrice: prices[isin] } : f;
+          });
+          this.setState({ investments, sheetPrices: prices, sheetPricesStatus: 'ok', sheetPricesUpdatedAt: new Date().toISOString() });
+        } catch (e) { this.setState({ sheetPricesStatus: 'error' }); }
+        cleanup();
+      };
+      const script = document.createElement('script');
+      script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:json;responseHandler=' + cbName;
+      script.onerror = () => { this.setState({ sheetPricesStatus: 'error' }); cleanup(); };
+      document.body.appendChild(script);
+    },
 
     // -------- formatting --------
     fmt(n) { if (this.state.hideBalances) return '••••• €'; return new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' €'; },
@@ -307,8 +431,6 @@
     openAddInvestment() { this.setState({ txType: 'investment', txLockInvestment: true, txAmount: '', txFundMode: 'existing', txFundId: '', txFundName: '', txFundIsin: '', txFundPrice: '', txFundUnits: '', txRepeat: false, txAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '', modal: 'addTx' }); },
     openAddTxDefault() { this.setState({ txType: 'expense', txLockInvestment: false, txAmount: '', txCategoryId: '', txRepeat: false, txAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '', modal: 'addTx' }); },
     toggleHide() { this.setState({ hideBalances: !this.state.hideBalances }); },
-    toggleLiquidez() { this.setState({ liquidezOpen: !this.state.liquidezOpen }); },
-    toggleFondosGroup() { this.setState({ fondosOpen: !this.state.fondosOpen }); },
 
     // -------- onboarding --------
     completeOnboarding() {
@@ -327,7 +449,7 @@
     setTxFreq(f) { this.setState({ txFreq: f }); },
     selectFund(id) {
       const f = this.state.investments.find(x => x.id === id);
-      this.setState({ txFundMode: 'existing', txFundId: id, txFundPrice: f ? String(f.currentPrice) : this.state.txFundPrice });
+      this.setState({ txFundMode: 'existing', txFundId: id, txFundPrice: f ? numToInputStr(f.currentPrice) : this.state.txFundPrice });
     },
     selectNewFund() { this.setState({ txFundMode: 'new', txFundId: '' }); },
     toggleNewCategory() { this.setState({ showNewCategory: !this.state.showNewCategory }); },
@@ -350,7 +472,7 @@
         editingCategoryId: id,
         catKind: cat.kind || 'daily',
         catBudgetType: cat.budgetType || 'amount',
-        catBudgetValue: cat.budgetValue ? String(cat.budgetValue) : '',
+        catBudgetValue: cat.budgetValue ? numToInputStr(cat.budgetValue) : '',
         catBudgetReturnTo: this.state.modal === 'settings' ? 'settings' : null,
         modal: 'categoryBudget',
       });
@@ -424,7 +546,7 @@
       let fund;
       if (this.state.txFundMode === 'new') {
         if (!this.state.txFundName.trim()) { alert('Indica el nombre del fondo'); return; }
-        fund = { id: uid(), name: this.state.txFundName.trim(), isin: this.state.txFundIsin.trim(), units: 0, avgCost: 0, currentPrice: price, totalInvested: 0, ops: [] };
+        fund = { id: uid(), name: this.state.txFundName.trim(), isin: this.state.txFundIsin.trim(), units: 0, avgCost: 0, currentPrice: price, totalInvested: 0, ops: [], priceSource: this.state.txFundIsin.trim() ? 'auto' : 'manual' };
         investments.push(fund);
       } else {
         fund = investments.find(f => f.id === this.state.txFundId);
@@ -447,32 +569,16 @@
     },
 
     // -------- recurring --------
+    // Investment rules confirm via openConfirmDueRule -> the fund buy sheet
+    // (editable date/units/price), not here — this only handles income/expense.
     confirmRecurring(ruleId) {
       const rule = this.state.recurringRules.find(r => r.id === ruleId);
-      if (!rule) return;
+      if (!rule || rule.type === 'investment') return;
       const today = todayISO();
-      if (rule.type === 'investment') {
-        const priceStr = window.prompt('Precio actual por participación para registrar el aporte:', '');
-        if (priceStr === null) return;
-        const price = parseNum(priceStr);
-        if (!price || price <= 0) return;
-        const investments = this.state.investments.map(f => ({ ...f }));
-        const fund = investments.find(f => f.id === rule.fundId);
-        if (!fund) return;
-        const units = rule.amount / price;
-        fund.units += units; fund.totalInvested += rule.amount; fund.avgCost = fund.totalInvested / fund.units; fund.currentPrice = price;
-        const newOp = { id: uid(), type: 'buy', date: today, units, price, amount: rule.amount };
-        fund.ops = [newOp, ...fund.ops];
-        const accounts = this.state.accounts.map(a => a.id === rule.accountId ? { ...a, balance: a.balance - rule.amount } : a);
-        const tx = { id: uid(), type: 'investment_buy', amount: rule.amount, date: today, accountId: rule.accountId, fundId: fund.id, opId: newOp.id, note: rule.note, recurringRuleId: rule.id };
-        const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
-        this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], recurringRules });
-      } else {
-        const accounts = this.state.accounts.map(a => a.id === rule.accountId ? { ...a, balance: rule.type === 'expense' ? a.balance - rule.amount : a.balance + rule.amount } : a);
-        const tx = { id: uid(), type: rule.type, amount: rule.amount, date: today, accountId: rule.accountId, categoryId: rule.categoryId, note: rule.note, recurringRuleId: rule.id };
-        const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
-        this.setState({ accounts, transactions: [tx, ...this.state.transactions], recurringRules });
-      }
+      const accounts = this.state.accounts.map(a => a.id === rule.accountId ? { ...a, balance: rule.type === 'expense' ? a.balance - rule.amount : a.balance + rule.amount } : a);
+      const tx = { id: uid(), type: rule.type, amount: rule.amount, date: today, accountId: rule.accountId, categoryId: rule.categoryId, note: rule.note, recurringRuleId: rule.id };
+      const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
+      this.setState({ accounts, transactions: [tx, ...this.state.transactions], recurringRules });
     },
     skipRecurring(ruleId) {
       const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
@@ -483,7 +589,7 @@
       this.setState({ recurringRules: this.state.recurringRules.filter(r => r.id !== ruleId), editingPlanId: null });
     },
     togglePlanEdit(rule) {
-      this.setState({ editingPlanId: rule.id, planEditAmount: String(rule.amount), planEditDay: String(new Date(rule.nextDate + 'T00:00:00').getDate()), planEditFreq: rule.frequency, planEditAccountId: rule.accountId, modal: 'planEdit' });
+      this.setState({ editingPlanId: rule.id, planEditAmount: numToInputStr(rule.amount), planEditDay: String(new Date(rule.nextDate + 'T00:00:00').getDate()), planEditFreq: rule.frequency, planEditAccountId: rule.accountId, modal: 'planEdit' });
     },
     savePlanEdit(ruleId) {
       const amt = parseNum(this.state.planEditAmount);
@@ -513,7 +619,7 @@
       this.setState({
         editingRecurringId: id,
         recEditType: rule.type,
-        recEditAmount: String(rule.amount),
+        recEditAmount: numToInputStr(rule.amount),
         recEditCategoryId: rule.categoryId || '',
         recEditAccountId: rule.accountId,
         recEditFreq: rule.frequency,
@@ -702,17 +808,32 @@
     // -------- fund detail --------
     openFund(id) { this.setState({ activeFundId: id, modal: 'fundDetail', fundAction: null, editingPrice: false }); },
     currentFund() { return this.state.investments.find(f => f.id === this.state.activeFundId); },
-    startBuy() { this.setState({ fundAction: 'buy', fundActionAmount: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '' }); },
-    startSell() { this.setState({ fundAction: 'sell', fundActionUnits: '', fundActionAmount: '', fundActionFee: '', fundActionAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '' }); },
-    cancelFundAction() { this.setState({ fundAction: null }); },
-    startEditPrice() { const f = this.currentFund(); if (!f) return; this.setState({ editingPrice: true, editingPriceValue: String(f.currentPrice) }); },
+    startBuy() { this.setState({ fundAction: 'buy', fundActionAmount: '', fundActionUnits: '', fundActionFee: '', fundActionDate: todayISO(), fundActionAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '' }); },
+    startSell() { this.setState({ fundAction: 'sell', fundActionUnits: '', fundActionAmount: '', fundActionFee: '', fundActionDate: todayISO(), fundActionAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '' }); },
+    openConfirmDueRule(ruleId) {
+      const rule = this.state.recurringRules.find(r => r.id === ruleId);
+      if (!rule || rule.type !== 'investment') return;
+      const fund = this.state.investments.find(f => f.id === rule.fundId);
+      const price = fund && fund.currentPrice ? fund.currentPrice : 0;
+      const units = price > 0 ? (rule.amount / price) : 0;
+      this.setState({
+        activeFundId: rule.fundId, modal: 'fundDetail', editingPrice: false,
+        fundAction: 'buy', confirmingRuleId: ruleId,
+        fundActionAmount: numToInputStr(rule.amount),
+        fundActionUnits: units > 0 ? numToInputStr(+units.toFixed(4)) : '',
+        fundActionFee: '', fundActionDate: rule.nextDate || todayISO(),
+        fundActionAccountId: rule.accountId || (this.state.accounts[0] ? this.state.accounts[0].id : ''),
+      });
+    },
+    cancelFundAction() { this.setState({ fundAction: null, confirmingRuleId: null }); },
+    startEditPrice() { const f = this.currentFund(); if (!f) return; this.setState({ editingPrice: true, editingPriceValue: numToInputStr(f.currentPrice) }); },
     saveEditPrice() {
       const price = parseNum(this.state.editingPriceValue);
       if (!price || price <= 0) { this.setState({ editingPrice: false }); return; }
       const investments = this.state.investments.map(f => f.id === this.state.activeFundId ? { ...f, currentPrice: price } : f);
       this.setState({ investments, editingPrice: false });
     },
-    startEditJornal() { this.setState({ editingJornal: true, editingJornalValue: this.state.jornal ? String(this.state.jornal) : '' }); },
+    startEditJornal() { this.setState({ editingJornal: true, editingJornalValue: this.state.jornal ? numToInputStr(this.state.jornal) : '' }); },
     saveEditJornal() {
       const value = parseNum(this.state.editingJornalValue) || 0;
       this.setState({ jornal: Math.max(0, value), editingJornal: false });
@@ -722,17 +843,24 @@
       const units = parseNum(this.state.fundActionUnits);
       const amt = parseNum(this.state.fundActionAmount);
       const fee = parseNum(this.state.fundActionFee) || 0;
+      const date = this.state.fundActionDate || todayISO();
       if (!units || units <= 0 || !amt || amt <= 0 || !this.state.fundActionAccountId) { alert('Completa los datos'); return; }
       const price = amt / units, cost = amt + fee, cashOut = amt + fee;
-      const newOp = { id: uid(), type: 'buy', date: todayISO(), units, price, amount: cost };
+      const ruleId = this.state.confirmingRuleId;
+      const newOp = { id: uid(), type: 'buy', date, units, price, amount: cost };
       const investments = this.state.investments.map(f => {
         if (f.id !== fund.id) return f;
         const newUnits = f.units + units, newInvested = f.totalInvested + cost;
         return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newInvested / newUnits, currentPrice: price, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance - cashOut } : a);
-      const tx = { id: uid(), type: 'investment_buy', amount: cashOut, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
-      this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], fundAction: null });
+      const tx = { id: uid(), type: 'investment_buy', amount: cashOut, date, accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
+      let recurringRules = this.state.recurringRules;
+      if (ruleId) {
+        tx.recurringRuleId = ruleId;
+        recurringRules = recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
+      }
+      this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], recurringRules, fundAction: null, confirmingRuleId: null, modal: ruleId ? null : this.state.modal });
     },
     confirmFundSell() {
       const fund = this.currentFund(); if (!fund) return;
@@ -740,8 +868,9 @@
       const amt = parseNum(this.state.fundActionAmount);
       const fee = parseNum(this.state.fundActionFee) || 0;
       if (!units || units <= 0 || units > fund.units + 1e-9 || !amt || amt <= 0 || !this.state.fundActionAccountId) { alert('Datos inválidos'); return; }
+      const date = this.state.fundActionDate || todayISO();
       const price = amt / units, proceeds = amt - fee;
-      const newOp = { id: uid(), type: 'sell', date: todayISO(), units, price, amount: proceeds };
+      const newOp = { id: uid(), type: 'sell', date, units, price, amount: proceeds };
       const investments = this.state.investments.map(f => {
         if (f.id !== fund.id) return f;
         const newUnits = f.units - units;
@@ -749,7 +878,7 @@
         return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newUnits > 1e-9 ? newInvested / newUnits : 0, currentPrice: price, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance + proceeds } : a);
-      const tx = { id: uid(), type: 'investment_sell', amount: proceeds, date: todayISO(), accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
+      const tx = { id: uid(), type: 'investment_sell', amount: proceeds, date, accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
       this.setState({ investments, accounts, transactions: [tx, ...this.state.transactions], fundAction: null });
     },
     deleteFund() {
@@ -776,7 +905,7 @@
       if (!t) return;
       this.setState({
         editingTxId: id, modal: 'txDetail',
-        txEditAmount: String(Math.abs(t.amount)), txEditDate: t.date,
+        txEditAmount: numToInputStr(Math.abs(t.amount)), txEditDate: t.date,
         txEditCategoryId: t.categoryId || '', txEditAccountId: t.accountId || '', txEditNote: t.note || '',
       });
     },
@@ -980,8 +1109,11 @@
           };
           const netWorthHistory = mergeHistory(this.state.netWorthHistory, data.netWorthHistory);
           const investmentHistory = mergeHistory(this.state.investmentHistory, data.investmentHistory);
+          const closesMap = {};
+          [...(data.monthlyCloses || []), ...this.state.monthlyCloses].forEach(c => { closesMap[c.month] = c; });
+          const monthlyCloses = Object.values(closesMap).sort((a, b) => a.month < b.month ? -1 : 1);
           const jornal = this.state.jornal || data.jornal || 0;
-          this.setState({ categories, accounts, investments, transactions, recurringRules, netWorthHistory, investmentHistory, jornal, modal: null });
+          this.setState({ categories, accounts, investments, transactions, recurringRules, netWorthHistory, investmentHistory, monthlyCloses, jornal, modal: null });
           alert('Importado: ' + investments.length + ' inversiones, ' + (data.transactions || []).length + ' movimientos, ' + (data.accounts || []).length + ' cuentas nuevas.');
         } catch (err) { alert('No se pudo importar el archivo: ' + err.message); }
       };
@@ -1009,7 +1141,7 @@
       transactions.push({ id: uid(), type: 'expense', amount: 20, date: daysAgo(5), accountId: accId2, categoryId: catByName('Ocio').id, note: 'Cine' }); bal2 -= 20;
       transactions.push({ id: uid(), type: 'adjustment', amount: 100, date: daysAgo(60), accountId: accId2, note: 'Retirada de efectivo' }); bal2 += 100;
       const fundId = uid();
-      const fund = { id: fundId, name: 'Fidelity S&P 500', isin: 'IE00BYX5MX67', units: 0, avgCost: 0, currentPrice: 0, totalInvested: 0, ops: [] };
+      const fund = { id: fundId, name: 'Fidelity S&P 500', isin: 'IE00BYX5MX67', units: 0, avgCost: 0, currentPrice: 0, totalInvested: 0, ops: [], priceSource: 'auto' };
       const buy = (units, price, d) => { fund.ops.unshift({ id: uid(), type: 'buy', date: daysAgo(d), units, price, amount: +(units * price).toFixed(2) }); fund.units += units; fund.totalInvested += units * price; fund.currentPrice = price; };
       buy(2.1, 180, 80); buy(2.05, 195, 50); buy(1.9, 205, 20);
       fund.avgCost = fund.totalInvested / fund.units;
@@ -1200,6 +1332,17 @@
         </div>
         <button type="button" class="icon-btn" style="width:40px;height:40px" data-action="openSettings">${Icons.gear()}</button>
       </div>
+
+      <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
+        <div>
+          <div class="label-caps">Jornal</div>
+          ${s.editingJornal
+            ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
+            : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
+          <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
+        </div>
+        ${!s.editingJornal ? Icons.pencil() : ''}
+      </button>
 
       <div class="net-worth-block">
         <div class="row-flex" style="justify-content:center;gap:6px;color:var(--ink-soft);font-size:14px;font-weight:600">
@@ -1392,34 +1535,23 @@
   // -------- investments --------
   Render.investments = (App) => {
     const s = App.state;
-    const accounts = App.sortedAccounts();
     const totalInvested = s.investments.reduce((a, f) => a + f.totalInvested, 0);
     const marketValue = s.investments.reduce((a, f) => a + f.units * f.currentPrice, 0);
-    const accountsPositiveTotal = Math.max(0, accounts.reduce((a, acc) => a + acc.balance, 0));
-    const donutTotal = accountsPositiveTotal + Math.max(0, marketValue) || 1;
-    const CIRC = 2 * Math.PI * 80;
-    const accPct = accountsPositiveTotal / donutTotal * 100;
-    const fndPct = Math.max(0, marketValue) / donutTotal * 100;
-    const DONUT_GAP = 24, DONUT_MIN = 18;
-    const accLen = accPct / 100 * CIRC, fndLen = fndPct / 100 * CIRC;
-    // Use the same rounded % shown on screen to decide whether a segment draws at all —
-    // otherwise a floating-point residue that rounds to "0%" could still paint a phantom
-    // sliver (the DONUT_MIN floor kicking in for a technically-nonzero-but-invisible value).
-    const accDrawLen = Math.round(accPct) <= 0 ? 0 : Math.max(DONUT_MIN, accLen - DONUT_GAP);
-    const fndDrawLen = Math.round(fndPct) <= 0 ? 0 : Math.max(DONUT_MIN, fndLen - DONUT_GAP);
-    const donutAccountsDasharray = accDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
-    const donutFundsDasharray = fndDrawLen.toFixed(1) + ' ' + CIRC.toFixed(1);
-    // Offset the funds arc from where the accounts arc actually ends (accDrawLen),
-    // not its full undrawn length (accLen) — those differ once DONUT_GAP is
-    // subtracted, and using the wrong one let the two arcs' gaps be uneven or
-    // the segments visually crowd/overlap at lopsided splits (e.g. 91% / 9%).
-    const donutFundsOffset = (-(accDrawLen + DONUT_GAP)).toFixed(1);
     const pnl = marketValue - totalInvested;
     const pnlPct = totalInvested > 0 ? (pnl / totalInvested * 100) : 0;
+    const pnlColor = pnl >= 0 ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)';
+    const pnlBg = pnl >= 0 ? 'oklch(93% 0.05 155)' : 'oklch(94% 0.04 25)';
+    const pnlFg = pnl >= 0 ? 'oklch(38% 0.1 155)' : 'oklch(50% 0.15 25)';
 
     const fundsList = s.investments.map(f => {
       const val = f.units * f.currentPrice, fp = f.totalInvested > 0 ? ((val - f.totalInvested) / f.totalInvested * 100) : 0;
-      return { id: f.id, letter: (f.name[0] || 'F').toUpperCase(), name: f.name, valueDisplay: App.fmt(val), pnlDisplay: App.fmtPct(fp), pnlColor: fp >= 0 ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)' };
+      const auto = f.priceSource !== 'manual';
+      const matched = auto && f.isin && s.sheetPrices[f.isin.trim()] !== undefined;
+      return {
+        id: f.id, letter: (f.name[0] || 'F').toUpperCase(), name: f.name, valueDisplay: App.fmt(val), pnlDisplay: App.fmtPct(fp),
+        pnlColor: fp >= 0 ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)',
+        sourceLabel: auto ? (matched ? 'Auto' : 'Auto · sin cotización') : 'Manual',
+      };
     });
 
     const today = todayISO();
@@ -1430,28 +1562,38 @@
       const isDue = r.nextDate <= today;
       return { id: r.id, fundName: f ? f.name : 'Fondo', color: PALETTE[(fIdx >= 0 ? fIdx : 0) % PALETTE.length], day: new Date(r.nextDate + 'T00:00:00').getDate(), isDue, amountText: App.fmtAbs(r.amount) };
     });
+    const dueRules = plansList.filter(p => p.isDue);
     const monthlyPlanTotal = s.recurringRules.filter(r => r.type === 'investment').reduce((a, r) => {
       const mult = r.frequency === 'weekly' ? 4.345 : r.frequency === 'annual' ? (1 / 12) : 1;
       return a + r.amount * mult;
     }, 0);
-
-    const liquidezRows = accounts.map(a => `
-      <div class="invest-sub-row">
-        <span style="width:8px;height:8px;border-radius:9999px;background:${a.color};flex-shrink:0"></span>
-        <span style="width:28px;height:28px;border-radius:9999px;background:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0">${Icons.accountType(a.type)}</span>
-        <span style="flex:1;font-size:14px;font-weight:600;color:var(--ink)">${esc(a.name)}</span>
-        <span style="font-size:14px;font-weight:700;color:var(--ink)">${esc(App.fmt(a.balance))}</span>
-      </div>`).join('');
 
     const fundsRows = fundsList.length ? fundsList.map(f => `
       <div class="invest-sub-row" style="cursor:pointer" data-action="openFund" data-id="${f.id}">
         <span class="avatar-badge" style="width:28px;height:28px;background:oklch(66% 0.14 235);font-size:13px">${esc(f.letter)}</span>
         <span style="flex:1;min-width:0">
           <span style="display:block;font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</span>
-          <span style="display:block;font-size:11px;color:${f.pnlColor};font-weight:600">${esc(f.pnlDisplay)}</span>
+          <span style="display:block;font-size:11px;color:${f.pnlColor};font-weight:600">${esc(f.pnlDisplay)} <span style="color:var(--ink-soft);font-weight:600">· ${esc(f.sourceLabel)}</span></span>
         </span>
         <span style="font-size:14px;font-weight:800;color:var(--ink)">${esc(f.valueDisplay)}</span>
       </div>`).join('') : `<div style="padding:16px;text-align:center;color:var(--ink-soft);font-size:13px">Aún no tienes fondos. Pulsa "+" para registrar tu primer aporte.</div>`;
+
+    const pendingHtml = dueRules.length ? `
+      <div style="margin-top:24px">
+        <div class="section-title-sm">Operaciones pendientes de confirmar</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+          ${dueRules.map(pl => `
+            <div class="card row-flex gap10" style="padding:14px">
+              <span style="width:9px;height:9px;border-radius:3px;background:${pl.color};flex-shrink:0"></span>
+              <span style="flex:1;min-width:0">
+                <span style="display:block;font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pl.fundName)}</span>
+                <span style="display:block;font-size:11px;color:var(--ink-soft);margin-top:1px">Vencido · ${esc(pl.amountText)}</span>
+              </span>
+              <button type="button" data-action="skipRecurring" data-id="${pl.id}" style="width:30px;height:30px;border-radius:9999px;background:oklch(94% 0.04 25);display:flex;align-items:center;justify-content:center;border:none;flex-shrink:0">${Icons.closeThin('oklch(58% 0.19 25)')}</button>
+              <button type="button" data-action="openConfirmDueRule" data-id="${pl.id}" style="padding:9px 16px;border-radius:9999px;background:oklch(58% 0.15 155);color:#fff;font-size:13px;font-weight:700;border:none;flex-shrink:0;cursor:pointer">Confirmar</button>
+            </div>`).join('')}
+        </div>
+      </div>` : '';
 
     const plansHtml = plansList.length ? `
       <div style="margin-top:24px">
@@ -1469,15 +1611,80 @@
                 <span style="width:9px;height:9px;border-radius:3px;background:${pl.color};flex-shrink:0"></span>
                 <span style="flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pl.fundName)}</span>
                 <span style="font-size:12px;color:var(--ink-soft);flex-shrink:0">día ${pl.day}</span>
-                ${pl.isDue ? `
-                  <button type="button" data-action="skipRecurring" data-id="${pl.id}" style="width:26px;height:26px;border-radius:9999px;background:oklch(94% 0.04 25);display:flex;align-items:center;justify-content:center;border:none;flex-shrink:0">${Icons.closeThin('oklch(58% 0.19 25)')}</button>
-                  <button type="button" data-action="confirmRecurring" data-id="${pl.id}" style="width:26px;height:26px;border-radius:9999px;background:oklch(93% 0.05 155);display:flex;align-items:center;justify-content:center;border:none;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 6l3 3 5-6.5" stroke="oklch(38% 0.1 155)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-                ` : `<span style="font-size:14px;font-weight:800;color:var(--ink);width:70px;text-align:right;flex-shrink:0">${esc(pl.amountText)}</span>`}
+                <span style="font-size:14px;font-weight:800;color:var(--ink);width:70px;text-align:right;flex-shrink:0">${esc(pl.amountText)}</span>
                 <button type="button" data-action="openPlanEdit" data-id="${pl.id}" style="width:26px;height:26px;border-radius:9999px;background:oklch(96% 0.003 90);display:flex;align-items:center;justify-content:center;border:none;flex-shrink:0">${Icons.pencil()}</button>
               </div>`).join('')}
           </div>
         </div>
       </div>` : `<div class="empty-note" style="margin-top:10px;margin-bottom:24px">Activa "Repetir" al añadir un aporte para crear un plan periódico.</div>`;
+
+    // -------- monthly performance heatmap (Modified Dietz) --------
+    const MONTH_ABBR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+    const yearMonths = MONTH_ABBR.map((label, i) => {
+      const key = s.investYear + '-' + String(i + 1).padStart(2, '0');
+      return { label, ...App.monthlyReturn(key) };
+    });
+    const monthCellsHtml = yearMonths.map(mo => {
+      const has = mo.hasData && mo.returnPct !== null;
+      const pos = has && mo.returnPct >= 0;
+      const bg = !has ? 'oklch(96% 0.003 90)' : (pos ? 'oklch(93% 0.05 155)' : 'oklch(94% 0.04 25)');
+      const fg = !has ? 'var(--ink-soft)' : (pos ? 'oklch(38% 0.1 155)' : 'oklch(50% 0.15 25)');
+      return `
+        <div style="background:${bg};border-radius:14px;padding:11px 6px;text-align:center;position:relative">
+          ${mo.real ? `<span style="position:absolute;top:7px;right:8px;width:5px;height:5px;border-radius:9999px;background:${fg};opacity:0.7"></span>` : ''}
+          <div style="font-size:10px;font-weight:700;color:${fg};opacity:0.75">${mo.label}</div>
+          <div style="font-size:13px;font-weight:800;color:${fg};margin-top:4px">${has ? esc(App.fmtPct(mo.returnPct)) : '·'}</div>
+        </div>`;
+    }).join('');
+    const yearReturn = App.annualReturn(s.investYear);
+    const heatmapHtml = s.investments.length ? `
+      <div style="margin-top:24px">
+        <div class="row-flex between">
+          <div class="section-title-sm">Rendimiento mensual</div>
+          <div class="row-flex gap8">
+            <button type="button" class="icon-btn" style="width:28px;height:28px;background:oklch(94% 0.005 90)" data-action="navInvestYearPrev">${Icons.arrowLeft()}</button>
+            <div style="font-size:14px;font-weight:800;color:var(--ink);padding:0 2px">${s.investYear}</div>
+            <button type="button" class="icon-btn" style="width:28px;height:28px;background:oklch(94% 0.005 90)" data-action="navInvestYearNext">${Icons.arrowRight()}</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px">${monthCellsHtml}</div>
+        <div class="card row-flex between" style="margin-top:10px;padding:14px 16px">
+          <span style="font-size:13px;font-weight:700;color:var(--ink)">Rentabilidad ${s.investYear}</span>
+          <span style="font-size:15px;font-weight:800;color:${yearReturn === null ? 'var(--ink-soft)' : (yearReturn >= 0 ? pnlColor : 'oklch(58% 0.19 25)')}">${yearReturn === null ? '—' : esc(App.fmtPct(yearReturn))}</span>
+        </div>
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;line-height:1.5">Rentabilidad mensual ponderada por flujos (Modified Dietz). El punto · marca meses con cierre real (foto del valor a fin de mes, guardada automáticamente); el resto se estima con el precio de tus compras.</div>
+      </div>` : '';
+
+    // -------- annual return vs. invested --------
+    let minYear = new Date().getFullYear();
+    s.investments.forEach(f => (f.ops || []).forEach(op => { const y = parseInt(op.date.slice(0, 4), 10); if (y < minYear) minYear = y; }));
+    const years = []; for (let y = minYear; y <= new Date().getFullYear(); y++) years.push(y);
+    const annualRows = years.map(y => ({ year: y, ret: App.annualReturn(y), invested: App.investedAsOfDate((y + 1) + '-01-01') }));
+    const maxAbsRet = Math.max(1, ...annualRows.map(r => Math.abs(r.ret || 0)));
+    const annualChartHtml = (s.investments.length && annualRows.length) ? `
+      <div style="margin-top:24px;margin-bottom:24px">
+        <div class="section-title-sm">Rendimiento anual vs. invertido</div>
+        <div class="card" style="margin-top:10px;padding:16px">
+          ${annualRows.map(r => {
+            const barColor = (r.ret || 0) >= 0 ? 'oklch(66% 0.15 155)' : 'oklch(58% 0.19 25)';
+            const pct = r.ret === null ? 0 : Math.max(4, Math.min(100, Math.abs(r.ret) / maxAbsRet * 100));
+            return `
+            <div style="margin-top:${r.year === years[0] ? '0' : '14px'}">
+              <div class="row-flex between" style="font-size:12px">
+                <span style="font-weight:800;color:var(--ink)">${r.year}</span>
+                <span style="color:var(--ink-soft)">Invertido: <span style="font-weight:700;color:var(--ink)">${esc(App.fmt(r.invested))}</span></span>
+                <span style="font-weight:800;color:${barColor}">${r.ret === null ? '—' : esc(App.fmtPct(r.ret))}</span>
+              </div>
+              <div class="progress-track" style="margin-top:6px"><div class="progress-fill" style="background:${barColor};width:${pct}%"></div></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+
+    const priceStatusLabel = s.sheetPricesStatus === 'loading' ? 'Actualizando precios…'
+      : s.sheetPricesStatus === 'error' ? 'No se pudieron actualizar los precios'
+      : s.sheetPricesUpdatedAt ? ('Precios actualizados · ' + new Date(s.sheetPricesUpdatedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }))
+      : 'Precios sin actualizar';
 
     return `
     <div class="screen-pad">
@@ -1488,60 +1695,31 @@
       </div>
 
       <div class="card" style="margin-top:20px;border-radius:24px;padding:22px">
-        <div style="font-size:20px;font-weight:800;color:var(--ink);letter-spacing:-0.3px">Patrimonio neto</div>
-        <div style="font-size:13px;color:var(--ink-soft);margin-top:2px">Resumen total de tu patrimonio</div>
-        <div class="donut-wrap">
-          <svg width="200" height="200" viewBox="0 0 200 200">
-            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(95% 0.004 90)" stroke-width="18"/>
-            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(62% 0.15 250)" stroke-width="18" stroke-linecap="round" transform="rotate(-90 100 100)" stroke-dasharray="${donutAccountsDasharray}"/>
-            <circle cx="100" cy="100" r="80" fill="none" stroke="oklch(66% 0.15 155)" stroke-width="18" stroke-linecap="round" transform="rotate(-90 100 100)" stroke-dasharray="${donutFundsDasharray}" stroke-dashoffset="${donutFundsOffset}"/>
-          </svg>
-          <div class="donut-center">
-            <div style="font-size:13px;color:oklch(55% 0.01 90)">Total</div>
-            <div style="font-size:20px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(App.computeNetWorth()))}</div>
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;margin-top:6px">
-          <div class="row-flex gap12" style="padding:9px 0">
-            <span style="width:9px;height:9px;border-radius:9999px;background:oklch(64% 0.16 250);flex-shrink:0"></span>
-            <span style="width:34px;height:34px;border-radius:10px;background:oklch(93% 0.04 250);display:flex;align-items:center;justify-content:center;flex-shrink:0">${Icons.misc('building')}</span>
-            <span style="flex:1;font-size:15px;font-weight:700;color:var(--ink)">Cuentas</span>
-            <span style="font-size:14px;color:oklch(55% 0.01 90);width:44px;text-align:right">${Math.round(accPct)}%</span>
-            <span style="font-size:15px;font-weight:800;color:var(--ink);width:100px;text-align:right">${esc(App.fmt(accountsPositiveTotal))}</span>
-          </div>
-          <div class="row-flex gap12" style="padding:9px 0">
-            <span style="width:9px;height:9px;border-radius:9999px;background:oklch(66% 0.15 155);flex-shrink:0"></span>
-            <span style="width:34px;height:34px;border-radius:10px;background:oklch(93% 0.05 155);display:flex;align-items:center;justify-content:center;flex-shrink:0">${Icons.misc('pie')}</span>
-            <span style="flex:1;font-size:15px;font-weight:700;color:var(--ink)">Fondos</span>
-            <span style="font-size:14px;color:oklch(55% 0.01 90);width:44px;text-align:right">${Math.round(fndPct)}%</span>
-            <span style="font-size:15px;font-weight:800;color:var(--ink);width:100px;text-align:right">${esc(App.fmt(marketValue))}</span>
-          </div>
+        <div style="font-size:13px;color:var(--ink-soft);font-weight:600">Valor de mercado</div>
+        <div style="font-size:32px;font-weight:800;color:var(--ink);margin-top:4px">${esc(App.fmt(marketValue))}</div>
+        <div style="display:inline-flex;margin-top:10px;padding:7px 14px;border-radius:9999px;background:${pnlBg};color:${pnlFg};font-size:12px;font-weight:700">${esc(App.fmtSigned(pnl))} (${esc(App.fmtPct(pnlPct))})</div>
+        <div style="height:1px;background:var(--divider);margin:16px 0"></div>
+        <div class="grid2" style="gap:14px">
+          <div><div class="label-caps">P&amp;L</div><div style="font-size:19px;font-weight:800;color:${pnlColor};margin-top:4px">${esc(App.fmtSigned(pnl))}</div></div>
+          <div><div class="label-caps">Invertido</div><div style="font-size:19px;font-weight:800;color:var(--ink);margin-top:4px">${esc(App.fmt(totalInvested))}</div></div>
         </div>
       </div>
 
-      <div class="section-title" style="margin-top:26px">Tus inversiones</div>
-      <div class="card" style="margin-top:12px;padding:12px;display:flex;flex-direction:column;gap:6px">
-        <button type="button" class="invest-group-row" data-action="toggleLiquidez">
-          <span style="width:38px;height:38px;border-radius:12px;background:oklch(93% 0.04 250);display:flex;align-items:center;justify-content:center;flex-shrink:0">${Icons.misc('wallet')}</span>
-          <span style="flex:1;font-size:15px;font-weight:700;color:var(--ink)">Liquidez</span>
-          <span style="font-size:16px;font-weight:800;color:var(--ink)">${esc(App.fmt(accountsPositiveTotal))}</span>
-          ${s.liquidezOpen ? Icons.chevronUp('oklch(50% 0.01 90)') : Icons.chevronDown('oklch(50% 0.01 90)')}
-        </button>
-        ${s.liquidezOpen ? liquidezRows : ''}
+      <button type="button" class="row-flex between" style="margin-top:10px;padding:8px 4px;width:100%;border:none;background:none;cursor:pointer" data-action="refreshSheetPrices">
+        <span style="font-size:11px;color:var(--ink-soft)">${esc(priceStatusLabel)}</span>
+        <span style="font-size:11px;font-weight:700;color:oklch(58% 0.15 155)">Actualizar ↻</span>
+      </button>
 
-        <button type="button" class="invest-group-row" style="margin-top:4px" data-action="toggleFondosGroup">
-          <span style="width:38px;height:38px;border-radius:12px;background:oklch(93% 0.05 155);display:flex;align-items:center;justify-content:center;flex-shrink:0">${Icons.misc('briefcase')}</span>
-          <span style="flex:1">
-            <span style="display:block;font-size:15px;font-weight:700;color:var(--ink)">Fondos</span>
-            <span style="display:block;font-size:11px;font-weight:600;color:${pnl >= 0 ? 'oklch(38% 0.1 155)' : 'oklch(50% 0.15 25)'};margin-top:1px">${esc(App.fmtSigned(pnl))} (${esc(App.fmtPct(pnlPct))})</span>
-          </span>
-          <span style="font-size:16px;font-weight:800;color:var(--ink)">${esc(App.fmt(marketValue))}</span>
-          ${s.fondosOpen ? Icons.chevronUp('oklch(50% 0.01 90)') : Icons.chevronDown('oklch(50% 0.01 90)')}
-        </button>
-        ${s.fondosOpen ? fundsRows : ''}
+      ${pendingHtml}
+
+      <div class="section-title" style="margin-top:${dueRules.length ? '24' : '20'}px">Tus fondos</div>
+      <div class="card" style="margin-top:12px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        ${fundsRows}
       </div>
 
       ${plansHtml}
+      ${heatmapHtml}
+      ${annualChartHtml}
     </div>`;
   };
 
@@ -1787,17 +1965,6 @@
         <div class="label-caps" style="margin-top:8px">Perfil</div>
         <input type="text" class="field-input" style="margin-top:8px;font-weight:600" data-bind="userName" value="${esc(s.userName)}"/>
 
-        <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
-          <div>
-            <div class="label-caps">Jornal</div>
-            ${s.editingJornal
-              ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
-              : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
-            <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
-          </div>
-          ${!s.editingJornal ? Icons.pencil() : ''}
-        </button>
-
         <div class="card row-flex between" style="margin-top:20px;padding:16px;cursor:pointer" data-action="toggleHide">
           <div>
             <div style="font-size:14px;font-weight:700;color:var(--ink)">Ocultar saldos</div>
@@ -1998,8 +2165,11 @@
       <div class="bottom-sheet-wrap">
         <button type="button" class="bottom-sheet-backdrop" data-action="cancelFundAction" aria-label="Cerrar"></button>
         <div class="bottom-sheet">
-          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.3px">${s.fundAction === 'buy' ? 'Comprar' : 'Vender'}</div>
-          <div class="label-caps" style="margin-top:20px">Cuenta</div>
+          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.3px">${s.confirmingRuleId ? 'Confirmar aporte' : (s.fundAction === 'buy' ? 'Comprar' : 'Vender')}</div>
+          ${s.confirmingRuleId ? `<div style="font-size:13px;color:var(--ink-soft);margin-top:4px">Revisa fecha, unidades y precio antes de confirmar.</div>` : ''}
+          <div class="label-caps" style="margin-top:20px">Fecha</div>
+          <input type="date" class="field-input" style="margin-top:6px;font-weight:600;background:oklch(94% 0.005 90)" data-bind="fundActionDate" value="${esc(s.fundActionDate)}"/>
+          <div class="label-caps" style="margin-top:16px">Cuenta</div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${accounts.map(a => Render.accChipFlat(a, s.fundActionAccountId, 'selectFundActionAccount')).join('')}</div>
           <div class="label-caps" style="margin-top:16px">${s.fundAction === 'buy' ? 'Unidades' : 'Unidades a vender'}</div>
           <input type="text" inputmode="decimal" class="field-input" style="margin-top:6px;font-weight:600;background:oklch(94% 0.005 90)" data-bind="fundActionUnits" value="${esc(s.fundActionUnits)}" placeholder="0"/>
@@ -2008,7 +2178,7 @@
           <div class="label-caps" style="margin-top:16px">Comisión (opcional)</div>
           <input type="text" inputmode="decimal" class="field-input" style="margin-top:6px;font-weight:600;background:oklch(94% 0.005 90)" data-bind="fundActionFee" value="${esc(s.fundActionFee)}" placeholder="0,00"/>
           ${s.fundAction === 'buy'
-            ? `<button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(70% 0.16 150);color:oklch(18% 0.05 150);font-size:16px;font-weight:800;cursor:pointer" data-action="confirmFundBuy">Registrar compra</button>`
+            ? `<button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(70% 0.16 150);color:oklch(18% 0.05 150);font-size:16px;font-weight:800;cursor:pointer" data-action="confirmFundBuy">${s.confirmingRuleId ? 'Confirmar aporte' : 'Registrar compra'}</button>`
             : `<button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(20% 0.01 90);color:#fff;font-size:16px;font-weight:800;cursor:pointer" data-action="confirmFundSell">Registrar venta</button>`}
         </div>
       </div>` : '';
@@ -2034,6 +2204,15 @@
           </div>
         </div>
         <div style="margin-top:12px;font-size:13px;color:var(--ink-soft)">Total invertido: <span style="font-weight:800;color:var(--ink)">${esc(App.fmt(fund ? fund.totalInvested : 0))}</span></div>
+
+        ${fund && fund.isin ? `
+        <div class="card row-flex between" style="margin-top:12px;padding:14px 16px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--ink)">Precio automático</div>
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Se actualiza desde tu hoja de precios por ISIN</div>
+          </div>
+          ${Render.switchEl(fund.priceSource !== 'manual', 'toggleFundPriceSource')}
+        </div>` : ''}
 
         <div style="display:flex;gap:10px;margin-top:16px">
           <button type="button" style="flex:1;padding:15px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:17px;font-weight:800;cursor:pointer" data-action="startBuy">+ Comprar</button>
@@ -2431,8 +2610,10 @@
     openAddInvestment: () => App.openAddInvestment(),
     openAddTxDefault: () => App.openAddTxDefault(),
     toggleHide: () => App.toggleHide(),
-    toggleLiquidez: () => App.toggleLiquidez(),
-    toggleFondosGroup: () => App.toggleFondosGroup(),
+    navInvestYearPrev: () => App.navInvestYear(-1),
+    navInvestYearNext: () => App.navInvestYear(1),
+    refreshSheetPrices: () => App.fetchSheetPrices(),
+    toggleFundPriceSource: () => App.toggleFundPriceSource(),
     toggleCatInline: () => App.toggleCatInline(),
     completeOnboarding: () => App.completeOnboarding(),
     selectTxType: (id, value) => App.setTxType(value),
@@ -2467,6 +2648,7 @@
     deleteAccountAction: () => App.deleteAccountAction(),
     createAccount: () => App.createAccount(),
     openFund: (id) => App.openFund(id),
+    openConfirmDueRule: (id) => App.openConfirmDueRule(id),
     startBuy: () => App.startBuy(),
     startSell: () => App.startSell(),
     cancelFundAction: () => App.cancelFundAction(),
