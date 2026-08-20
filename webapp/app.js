@@ -27,7 +27,8 @@
   function todayISO() { return new Date().toISOString().slice(0, 10); }
   function defaultCategories() {
     const out = [];
-    EXPENSE_CATS.forEach((name, i) => out.push({ id: 'e' + i, name, type: 'expense', color: PALETTE[i % PALETTE.length] }));
+    const FIXED_EXPENSE = new Set(['Vivienda', 'Suscripciones', 'Salud']);
+    EXPENSE_CATS.forEach((name, i) => out.push({ id: 'e' + i, name, type: 'expense', color: PALETTE[i % PALETTE.length], kind: FIXED_EXPENSE.has(name) ? 'fixed' : 'daily' }));
     INCOME_CATS.forEach((name, i) => out.push({ id: 'i' + i, name, type: 'income', color: PALETTE[(i + 4) % PALETTE.length] }));
     return out;
   }
@@ -200,6 +201,7 @@
         catInlineOpen: false,
         liquidezOpen: true, fondosOpen: true,
         editingTxId: null, txEditAmount: '', txEditDate: '', txEditCategoryId: '', txEditAccountId: '', txEditNote: '',
+        editingCategoryId: null, catKind: 'daily', catBudgetType: 'amount', catBudgetValue: '', catBudgetReturnTo: null,
       };
     },
 
@@ -283,7 +285,10 @@
   Object.assign(App, {
     setScreen(s) { this.setState({ screen: s, modal: null }); },
     openModal(m) { this.setState({ modal: m }); },
-    closeModal() { this.setState({ modal: null, fundAction: null, activeFundId: this.state.modal === 'fundDetail' ? null : this.state.activeFundId, editingPrice: false }); },
+    closeModal() {
+      const returnTo = this.state.modal === 'categoryBudget' ? this.state.catBudgetReturnTo : null;
+      this.setState({ modal: returnTo || null, fundAction: null, activeFundId: this.state.modal === 'fundDetail' ? null : this.state.activeFundId, editingPrice: false });
+    },
     openSettings() { this.setState({ modal: 'settings' }); },
     toggleCatInline() { this.setState({ catInlineOpen: !this.state.catInlineOpen }); },
     openAllTx() { this.setState({ modal: 'allTx', txSearch: '', txFilter: 'all' }); },
@@ -319,13 +324,58 @@
 
     addCategoryInline() {
       const name = this.state.newCatName.trim(); if (!name) return;
-      const cat = { id: uid(), name, type: this.state.txType === 'income' ? 'income' : 'expense', color: this.state.newCatColor };
+      const type = this.state.txType === 'income' ? 'income' : 'expense';
+      const cat = { id: uid(), name, type, color: this.state.newCatColor, kind: type === 'expense' ? 'daily' : undefined };
       this.setState({ categories: [...this.state.categories, cat], newCatName: '', newCatColor: PALETTE[0], showNewCategory: false, txCategoryId: cat.id });
     },
     addCategoryFromModal() {
       const name = this.state.newCatName.trim(); if (!name) return;
-      const cat = { id: uid(), name, type: this.state.catTab, color: this.state.newCatColor };
+      const cat = { id: uid(), name, type: this.state.catTab, color: this.state.newCatColor, kind: this.state.catTab === 'expense' ? 'daily' : undefined };
       this.setState({ categories: [...this.state.categories, cat], newCatName: '', newCatColor: PALETTE[0] });
+    },
+    openCategoryBudget(id) {
+      const cat = this.state.categories.find(c => c.id === id);
+      if (!cat) return;
+      this.setState({
+        editingCategoryId: id,
+        catKind: cat.kind || 'daily',
+        catBudgetType: cat.budgetType || 'amount',
+        catBudgetValue: cat.budgetValue ? String(cat.budgetValue) : '',
+        catBudgetReturnTo: this.state.modal === 'settings' ? 'settings' : null,
+        modal: 'categoryBudget',
+      });
+    },
+    saveCategoryBudget() {
+      const id = this.state.editingCategoryId;
+      const value = parseNum(this.state.catBudgetValue);
+      const hasValue = this.state.catBudgetValue.trim() !== '' && value > 0;
+      const categories = this.state.categories.map(c => c.id === id ? {
+        ...c,
+        kind: this.state.catKind,
+        budgetType: hasValue ? this.state.catBudgetType : null,
+        budgetValue: hasValue ? value : 0,
+      } : c);
+      this.setState({ categories, modal: this.state.catBudgetReturnTo || null, editingCategoryId: null });
+    },
+    clearCategoryBudget() {
+      const id = this.state.editingCategoryId;
+      const categories = this.state.categories.map(c => c.id === id ? { ...c, budgetType: null, budgetValue: 0 } : c);
+      this.setState({ categories, modal: this.state.catBudgetReturnTo || null, editingCategoryId: null });
+    },
+    categoryBudgetRows(kind, expenseList, incomeSum) {
+      const spentByCat = {};
+      expenseList.forEach(t => { spentByCat[t.categoryId] = (spentByCat[t.categoryId] || 0) + t.amount; });
+      const rows = this.state.categories
+        .filter(c => c.type === 'expense' && (c.kind || 'daily') === kind)
+        .map(c => {
+          const spent = spentByCat[c.id] || 0;
+          const hasBudget = c.budgetType === 'amount' || c.budgetType === 'percent';
+          const limit = c.budgetType === 'percent' ? (c.budgetValue / 100) * incomeSum : (c.budgetType === 'amount' ? c.budgetValue : 0);
+          return { id: c.id, name: c.name, color: c.color, spent, hasBudget, budgetType: c.budgetType, budgetValue: c.budgetValue, limit };
+        })
+        .filter(r => r.spent > 0 || r.hasBudget)
+        .sort((a, b) => b.spent - a.spent);
+      return { rows, total: rows.reduce((a, r) => a + r.spent, 0) };
     },
     deleteCategory(id) {
       if (!window.confirm('¿Eliminar esta categoría?')) return;
@@ -1113,6 +1163,8 @@
     }
     const categoryBreakdown = App.categoryBreakdown(activeList);
     const activeTabColor = s.statsTab === 'income' ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)';
+    const fixedGroup = App.categoryBudgetRows('fixed', expenseList, incomeSum);
+    const dailyGroup = App.categoryBudgetRows('daily', expenseList, incomeSum);
 
     const periodChips = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año']].map(([k, label]) => `
       <div data-action="selectStatsPeriod" data-value="${k}" style="flex:1;text-align:center;padding:10px;border-radius:9999px;font-size:13px;font-weight:700;cursor:pointer;background:${s.statsPeriod === k ? 'oklch(20% 0.01 90)' : 'transparent'};color:${s.statsPeriod === k ? '#fff' : 'oklch(40% 0.01 90)'}">${label}</div>`).join('');
@@ -1128,6 +1180,42 @@
             <div class="progress-track"><div class="progress-fill" style="background:${c.color};width:${c.pct}%"></div></div>
           </div>`).join('')}
       </div>` : `<div class="empty-note" style="margin-top:10px">Aún no hay ${s.statsTab === 'income' ? 'ingresos' : 'gastos'} en este periodo.</div>`;
+
+    const budgetRowHtml = (r) => {
+      const pct = r.limit > 0 ? Math.min(100, r.spent / r.limit * 100) : (r.hasBudget ? 100 : 0);
+      const over = r.hasBudget && r.spent > r.limit;
+      const remaining = r.limit - r.spent;
+      let footRight = '';
+      if (r.hasBudget) footRight = remaining >= 0 ? (esc(App.fmt(remaining)) + ' libre') : (esc(App.fmt(-remaining)) + ' superado');
+      const limitLabel = r.budgetType === 'percent' ? (r.budgetValue + '% de tus ingresos') : (r.hasBudget ? ('Límite ' + esc(App.fmt(r.budgetValue))) : 'Sin presupuesto · toca para fijar uno');
+      return `
+        <button type="button" class="tx-row" style="width:100%;border:none;text-align:left;cursor:pointer;flex-direction:column;align-items:stretch;gap:8px" data-action="openCategoryBudget" data-id="${r.id}">
+          <div class="row-flex between">
+            <div class="row-flex gap10">
+              <span style="width:32px;height:32px;border-radius:9999px;background:${r.color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0">${esc((r.name[0] || '?').toUpperCase())}</span>
+              <span style="font-size:14px;font-weight:700;color:var(--ink)">${esc(r.name)}</span>
+            </div>
+            <span style="font-size:15px;font-weight:800;color:var(--ink)">${esc(App.fmt(r.spent))}</span>
+          </div>
+          ${r.hasBudget ? `<div class="progress-track"><div class="progress-fill" style="background:${over ? 'oklch(58% 0.19 25)' : r.color};width:${pct}%"></div></div>` : ''}
+          <div class="row-flex between" style="font-size:11px;color:var(--ink-soft)">
+            <span>${limitLabel}</span>
+            ${footRight ? `<span style="font-weight:700;color:${over ? 'oklch(58% 0.19 25)' : 'var(--ink-soft)'}">${footRight}</span>` : ''}
+          </div>
+        </button>`;
+    };
+    const budgetGroupHtml = (title, subtitle, group) => !group.rows.length ? '' : `
+      <div style="margin-top:18px">
+        <div class="row-flex between">
+          <div>
+            <div style="font-size:16px;font-weight:800;color:var(--ink)">${title}</div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-top:1px">${subtitle}</div>
+          </div>
+          <div style="font-size:16px;font-weight:800;color:var(--ink)">${esc(App.fmt(group.total))}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${group.rows.map(budgetRowHtml).join('')}</div>
+      </div>`;
+    const categoryBudgetHtml = budgetGroupHtml('Gastos fijos', 'Recurrentes cada mes', fixedGroup) + budgetGroupHtml('Gastos diarios', 'Variables del día a día', dailyGroup);
 
     return `
     <div class="screen-pad">
@@ -1159,6 +1247,8 @@
         <div class="stat-tile"><div class="stat-label">Balance</div><div class="stat-value">${esc(App.fmt(balance))}</div></div>
         <div class="stat-tile"><div class="stat-label">Transacciones</div><div class="stat-value">${incomeList.length + expenseList.length}</div></div>
       </div>
+
+      ${categoryBudgetHtml}
 
       <div class="section-title-sm" style="margin-top:24px">Salud del periodo</div>
       <div class="grid2" style="margin-top:10px">
@@ -1613,6 +1703,7 @@
               <div class="row-flex gap12" style="background:oklch(97% 0.003 90);border-radius:14px;padding:12px 14px">
                 <span style="width:32px;height:32px;border-radius:9999px;background:${c.color};flex-shrink:0"></span>
                 <span style="flex:1;font-size:14px;font-weight:600;color:var(--ink)">${esc(c.name)}</span>
+                ${c.type === 'expense' ? `<button type="button" class="icon-btn" style="width:26px;height:26px;background:oklch(94% 0.005 90)" data-action="openCategoryBudget" data-id="${c.id}">${Icons.pencil()}</button>` : ''}
                 <button type="button" class="icon-btn" style="width:26px;height:26px;background:oklch(94% 0.005 90)" data-action="deleteCategory" data-id="${c.id}">${Icons.closeThin('oklch(50% 0.01 90)')}</button>
               </div>`).join('')}
           </div>
@@ -1874,6 +1965,45 @@
     </div>`;
   };
 
+  // -------- category budget --------
+  Render.chipToggle = (options, current, action) => `
+    <div style="display:flex;background:oklch(96% 0.003 90);border-radius:12px;padding:4px;margin-top:8px">
+      ${options.map(([k, label]) => `
+        <div data-action="${action}" data-value="${k}" style="flex:1;text-align:center;padding:10px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:${current === k ? 'oklch(58% 0.15 155)' : 'transparent'};color:${current === k ? '#fff' : 'oklch(50% 0.01 90)'}">${label}</div>`).join('')}
+    </div>`;
+  Render.modalCategoryBudget = (App) => {
+    const s = App.state;
+    const cat = s.categories.find(c => c.id === s.editingCategoryId);
+    const hasExistingBudget = !!(cat && cat.budgetType);
+    return `
+    <div class="modal-overlay">
+      ${Render.modalHeaderBack('Presupuesto')}
+      <div class="modal-body">
+        <div class="row-flex gap10" style="margin-top:6px">
+          <span style="width:36px;height:36px;border-radius:9999px;background:${cat ? cat.color : '#ccc'};flex-shrink:0"></span>
+          <div style="font-size:22px;font-weight:800;color:var(--ink)">${esc(cat ? cat.name : '')}</div>
+        </div>
+
+        <div class="label-caps" style="margin-top:22px">Tipo de gasto</div>
+        ${Render.chipToggle([['fixed', 'Fijo'], ['daily', 'Día a día']], s.catKind, 'selectCatKind')}
+
+        <div class="label-caps" style="margin-top:20px">Límite</div>
+        ${Render.chipToggle([['amount', '€ Importe'], ['percent', '% Ingresos']], s.catBudgetType, 'selectCatBudgetType')}
+
+        <div class="card" style="margin-top:14px;border-radius:20px">
+          <div style="display:flex;align-items:baseline;gap:6px">
+            <input type="text" inputmode="decimal" data-bind="catBudgetValue" value="${esc(s.catBudgetValue)}" placeholder="0" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:140px"/>
+            <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">${s.catBudgetType === 'percent' ? '%' : '€'}</span>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:8px">${s.catBudgetType === 'percent' ? 'Se calcula sobre tus ingresos del periodo seleccionado en Estadísticas. Déjalo en 0 para no fijar límite.' : 'Límite mensual para esta categoría. Déjalo en 0 para no fijar límite.'}</div>
+
+        <button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:15px;font-weight:800;cursor:pointer" data-action="saveCategoryBudget">Guardar</button>
+        ${hasExistingBudget ? `<button type="button" class="btn-danger-text" style="margin-top:14px" data-action="clearCategoryBudget">Quitar presupuesto</button>` : ''}
+      </div>
+    </div>`;
+  };
+
   // -------- all transactions --------
   Render.txFilteredListInner = (App) => {
     const rows = App.filteredTxList();
@@ -1974,6 +2104,7 @@
       case 'planEdit': return Render.modalPlanEdit(App);
       case 'allTx': return Render.modalAllTx(App);
       case 'txDetail': return Render.modalTxDetail(App);
+      case 'categoryBudget': return Render.modalCategoryBudget(App);
       default: return '';
     }
   };
@@ -2094,6 +2225,8 @@
     selectTxFilter: (s, id, v) => { s.txFilter = v; },
     selectTxEditCategory: (s, id) => { s.txEditCategoryId = id; },
     selectTxEditAccount: (s, id) => { s.txEditAccountId = id; },
+    selectCatKind: (s, id, v) => { s.catKind = v; },
+    selectCatBudgetType: (s, id, v) => { s.catBudgetType = v; },
   };
 
   const ACTIONS = {
@@ -2119,6 +2252,9 @@
     addCategoryInline: () => App.addCategoryInline(),
     addCategoryFromModal: () => App.addCategoryFromModal(),
     deleteCategory: (id) => App.deleteCategory(id),
+    openCategoryBudget: (id) => App.openCategoryBudget(id),
+    saveCategoryBudget: () => App.saveCategoryBudget(),
+    clearCategoryBudget: () => App.clearCategoryBudget(),
     saveTx: () => App.saveTx(),
     confirmRecurring: (id) => App.confirmRecurring(id),
     skipRecurring: (id) => App.skipRecurring(id),
