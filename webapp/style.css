@@ -63,7 +63,7 @@ svg { display: block; }
 .onboarding { flex: 1; min-height: 0; overflow-y: auto; padding: calc(24px + var(--safe-top)) 20px 40px; -webkit-overflow-scrolling: touch; }
 
 .app-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.screen { flex: 1; min-height: 0; overflow-y: auto; padding: calc(18px + var(--safe-top)) 0 24px; -webkit-overflow-scrolling: touch; }
+.screen { flex: 1; min-height: 0; overflow-y: auto; padding: calc(18px + var(--safe-top)) 0 calc(100px + var(--safe-bottom)); -webkit-overflow-scrolling: touch; }
 .screen-pad { padding: 0 20px; }
 
 .page-title { font-size: 26px; font-weight: 800; color: var(--ink); letter-spacing: -0.5px; text-align: center; }
@@ -158,16 +158,16 @@ textarea.field-input { resize: none; }
 .sparkline-card { margin-top: 24px; }
 
 /* ---------- bottom nav ----------
-   Normal flow (not fixed) — last flex child of #app, right after .app-main,
-   so it always sits exactly at the true bottom of the viewport regardless
-   of iOS Safari's toolbar state. position:relative only to anchor the FAB. */
+   Floating pill, detached from the edges rather than docked full-width —
+   sits above the safe area with its own margin instead of padding into it,
+   so there's no strip of bar background sitting in the home-indicator zone. */
 .tab-bar {
-  position: relative; flex-shrink: 0; z-index: 30;
+  position: fixed; left: 16px; right: 16px; bottom: calc(var(--safe-bottom) + 14px); z-index: 30;
   display: flex; align-items: center; justify-content: space-around;
-  padding: 6px 12px var(--safe-bottom); background: rgba(255, 255, 255, 0.999);
-  border-top: 1px solid var(--divider);
+  padding: 10px 12px; background: rgba(255, 255, 255, 0.999);
+  border-radius: 26px; box-shadow: 0 8px 24px oklch(25% 0.03 90 / 0.16);
 }
-.tab-item { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--ink-ter); background: none; border: none; padding: 2px 8px; }
+.tab-item { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--ink-ter); background: none; border: none; padding: 4px 8px; }
 .tab-item.active { color: var(--green); }
 .tab-item .tab-label { font-size: 10px; font-weight: 700; }
 .fab {
