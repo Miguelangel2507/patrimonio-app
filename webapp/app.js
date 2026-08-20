@@ -202,6 +202,7 @@
         liquidezOpen: true, fondosOpen: true,
         editingTxId: null, txEditAmount: '', txEditDate: '', txEditCategoryId: '', txEditAccountId: '', txEditNote: '',
         editingCategoryId: null, catKind: 'daily', catBudgetType: 'amount', catBudgetValue: '', catBudgetReturnTo: null,
+        jornal: 0, editingJornal: false, editingJornalValue: '',
       };
     },
 
@@ -233,7 +234,8 @@
         onboardingDone: s.onboardingDone, userName: s.userName, hideBalances: s.hideBalances,
         accounts: s.accounts, transactions: s.transactions, categories: s.categories,
         recurringRules: s.recurringRules, investments: s.investments,
-        netWorthHistory: s.netWorthHistory, investmentHistory: s.investmentHistory
+        netWorthHistory: s.netWorthHistory, investmentHistory: s.investmentHistory,
+        jornal: s.jornal,
       };
     },
     persist() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.pickPersisted())); } catch (e) {} },
@@ -362,15 +364,16 @@
       const categories = this.state.categories.map(c => c.id === id ? { ...c, budgetType: null, budgetValue: 0 } : c);
       this.setState({ categories, modal: this.state.catBudgetReturnTo || null, editingCategoryId: null });
     },
-    categoryBudgetRows(kind, expenseList, incomeSum) {
+    categoryBudgetRows(kind, expenseList) {
       const spentByCat = {};
       expenseList.forEach(t => { spentByCat[t.categoryId] = (spentByCat[t.categoryId] || 0) + t.amount; });
+      const jornal = this.state.jornal || 0;
       const rows = this.state.categories
         .filter(c => c.type === 'expense' && (c.kind || 'daily') === kind)
         .map(c => {
           const spent = spentByCat[c.id] || 0;
           const hasBudget = c.budgetType === 'amount' || c.budgetType === 'percent';
-          const limit = c.budgetType === 'percent' ? (c.budgetValue / 100) * incomeSum : (c.budgetType === 'amount' ? c.budgetValue : 0);
+          const limit = c.budgetType === 'percent' ? (c.budgetValue / 100) * jornal : (c.budgetType === 'amount' ? c.budgetValue : 0);
           return { id: c.id, name: c.name, color: c.color, spent, hasBudget, budgetType: c.budgetType, budgetValue: c.budgetValue, limit };
         })
         .filter(r => r.spent > 0 || r.hasBudget)
@@ -617,6 +620,11 @@
       if (!price || price <= 0) { this.setState({ editingPrice: false }); return; }
       const investments = this.state.investments.map(f => f.id === this.state.activeFundId ? { ...f, currentPrice: price } : f);
       this.setState({ investments, editingPrice: false });
+    },
+    startEditJornal() { this.setState({ editingJornal: true, editingJornalValue: this.state.jornal ? String(this.state.jornal) : '' }); },
+    saveEditJornal() {
+      const value = parseNum(this.state.editingJornalValue) || 0;
+      this.setState({ jornal: Math.max(0, value), editingJornal: false });
     },
     confirmFundBuy() {
       const fund = this.currentFund(); if (!fund) return;
@@ -881,7 +889,8 @@
           };
           const netWorthHistory = mergeHistory(this.state.netWorthHistory, data.netWorthHistory);
           const investmentHistory = mergeHistory(this.state.investmentHistory, data.investmentHistory);
-          this.setState({ categories, accounts, investments, transactions, recurringRules, netWorthHistory, investmentHistory, modal: null });
+          const jornal = this.state.jornal || data.jornal || 0;
+          this.setState({ categories, accounts, investments, transactions, recurringRules, netWorthHistory, investmentHistory, jornal, modal: null });
           alert('Importado: ' + investments.length + ' inversiones, ' + (data.transactions || []).length + ' movimientos, ' + (data.accounts || []).length + ' cuentas nuevas.');
         } catch (err) { alert('No se pudo importar el archivo: ' + err.message); }
       };
@@ -1101,6 +1110,17 @@
         <button type="button" class="icon-btn" style="width:40px;height:40px" data-action="openSettings">${Icons.gear()}</button>
       </div>
 
+      <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
+        <div>
+          <div class="label-caps">Jornal</div>
+          ${s.editingJornal
+            ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
+            : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
+          <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
+        </div>
+        ${!s.editingJornal ? Icons.pencil() : ''}
+      </button>
+
       <div class="net-worth-block">
         <div class="row-flex" style="justify-content:center;gap:6px;color:var(--ink-soft);font-size:14px;font-weight:600">
           <span>Patrimonio neto</span>
@@ -1163,8 +1183,8 @@
     }
     const categoryBreakdown = App.categoryBreakdown(activeList);
     const activeTabColor = s.statsTab === 'income' ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)';
-    const fixedGroup = App.categoryBudgetRows('fixed', expenseList, incomeSum);
-    const dailyGroup = App.categoryBudgetRows('daily', expenseList, incomeSum);
+    const fixedGroup = App.categoryBudgetRows('fixed', expenseList);
+    const dailyGroup = App.categoryBudgetRows('daily', expenseList);
 
     const periodChips = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año']].map(([k, label]) => `
       <div data-action="selectStatsPeriod" data-value="${k}" style="flex:1;text-align:center;padding:10px;border-radius:9999px;font-size:13px;font-weight:700;cursor:pointer;background:${s.statsPeriod === k ? 'oklch(20% 0.01 90)' : 'transparent'};color:${s.statsPeriod === k ? '#fff' : 'oklch(40% 0.01 90)'}">${label}</div>`).join('');
@@ -1187,7 +1207,7 @@
       const remaining = r.limit - r.spent;
       let footRight = '';
       if (r.hasBudget) footRight = remaining >= 0 ? (esc(App.fmt(remaining)) + ' libre') : (esc(App.fmt(-remaining)) + ' superado');
-      const limitLabel = r.budgetType === 'percent' ? (r.budgetValue + '% de tus ingresos') : (r.hasBudget ? ('Límite ' + esc(App.fmt(r.budgetValue))) : 'Sin presupuesto · toca para fijar uno');
+      const limitLabel = r.budgetType === 'percent' ? (r.budgetValue + '% del jornal') : (r.hasBudget ? ('Límite ' + esc(App.fmt(r.budgetValue))) : 'Sin presupuesto · toca para fijar uno');
       return `
         <button type="button" class="tx-row" style="width:100%;border:none;text-align:left;cursor:pointer;flex-direction:column;align-items:stretch;gap:8px" data-action="openCategoryBudget" data-id="${r.id}">
           <div class="row-flex between">
@@ -1996,7 +2016,7 @@
             <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">${s.catBudgetType === 'percent' ? '%' : '€'}</span>
           </div>
         </div>
-        <div style="font-size:12px;color:var(--ink-soft);margin-top:8px">${s.catBudgetType === 'percent' ? 'Se calcula sobre tus ingresos del periodo seleccionado en Estadísticas. Déjalo en 0 para no fijar límite.' : 'Límite mensual para esta categoría. Déjalo en 0 para no fijar límite.'}</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:8px">${s.catBudgetType === 'percent' ? ('Se calcula sobre tu Jornal (' + esc(App.fmt(s.jornal || 0)) + '). Déjalo en 0 para no fijar límite.') : 'Límite mensual para esta categoría. Déjalo en 0 para no fijar límite.'}</div>
 
         <button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:15px;font-weight:800;cursor:pointer" data-action="saveCategoryBudget">Guardar</button>
         ${hasExistingBudget ? `<button type="button" class="btn-danger-text" style="margin-top:14px" data-action="clearCategoryBudget">Quitar presupuesto</button>` : ''}
@@ -2200,6 +2220,10 @@
         const priceInput = root.querySelector('[data-blur-action="saveEditPrice"]');
         if (priceInput) { priceInput.focus(); priceInput.select(); }
       }
+      if (s.editingJornal) {
+        const jornalInput = root.querySelector('[data-blur-action="saveEditJornal"]');
+        if (jornalInput) { jornalInput.focus(); jornalInput.select(); }
+      }
     },
   });
 
@@ -2275,6 +2299,7 @@
     startSell: () => App.startSell(),
     cancelFundAction: () => App.cancelFundAction(),
     startEditPrice: () => App.startEditPrice(),
+    startEditJornal: () => App.startEditJornal(),
     confirmFundBuy: () => App.confirmFundBuy(),
     confirmFundSell: () => App.confirmFundSell(),
     deleteFund: () => App.deleteFund(),
@@ -2342,8 +2367,10 @@
       App.startDragReorder(el.dataset.id, e);
     });
 
+    const BLUR_ACTIONS = { saveEditPrice: () => App.saveEditPrice(), saveEditJornal: () => App.saveEditJornal() };
     root.addEventListener('blur', (e) => {
-      if (e.target && e.target.dataset && e.target.dataset.blurAction === 'saveEditPrice') App.saveEditPrice();
+      const fn = e.target && e.target.dataset && BLUR_ACTIONS[e.target.dataset.blurAction];
+      if (fn) fn();
     }, true);
 
     root.addEventListener('scroll', (e) => {
