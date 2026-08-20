@@ -1242,9 +1242,6 @@
     const prevIncomeSum = sumAmt(prevIncomeList), prevExpenseSum = sumAmt(prevExpenseList);
     const balance = incomeSum - expenseSum, prevBalance = prevIncomeSum - prevExpenseSum;
     const activeList = s.statsTab === 'income' ? incomeList : expenseList;
-    const activeSum = s.statsTab === 'income' ? incomeSum : expenseSum;
-    const prevActiveSum = s.statsTab === 'income' ? prevIncomeSum : prevExpenseSum;
-    const deltaVsPrev = activeSum - prevActiveSum;
     const now = new Date();
     const isCurrentPeriod = now >= range.start && now <= range.end;
     const daysTotal = Math.max(1, Math.round((range.end - range.start) / 86400000) + 1);
@@ -1262,7 +1259,6 @@
       }
     }
     const categoryBreakdown = App.categoryBreakdown(activeList);
-    const activeTabColor = s.statsTab === 'income' ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)';
     const fixedGroup = App.categoryBudgetRows('fixed', expenseList);
     const dailyGroup = App.categoryBudgetRows('daily', expenseList);
 
@@ -1317,19 +1313,33 @@
       </div>`;
     const categoryBudgetHtml = budgetGroupHtml('Gastos fijos', 'Recurrentes cada mes', fixedGroup) + budgetGroupHtml('Gastos diarios', 'Variables del día a día', dailyGroup);
 
+    const incomeDelta = incomeSum - prevIncomeSum, expenseDelta = expenseSum - prevExpenseSum;
+    const incomeDeltaGood = incomeDelta >= 0, expenseDeltaGood = expenseDelta <= 0;
+    const deltaChip = (delta, good) => `<div style="display:inline-flex;align-items:center;margin-top:8px;padding:4px 10px;border-radius:9999px;background:${good ? 'oklch(93% 0.05 155)' : 'oklch(94% 0.04 25)'};color:${good ? 'oklch(38% 0.1 155)' : 'oklch(50% 0.15 25)'};font-size:11px;font-weight:700;white-space:nowrap">${esc(App.fmtSigned(delta))}<span style="font-weight:600"> · vs. ant.</span></div>`;
+
     return `
     <div class="screen-pad">
       <div class="page-title">Estadísticas</div>
       <div class="page-subtitle">Tu resumen financiero</div>
 
       <div class="card" style="margin-top:20px">
-        <div class="segmented">
-          <div class="seg ${s.statsTab === 'income' ? 'active' : ''}" data-action="selectStatsTab" data-value="income">Ingresos</div>
-          <div class="seg ${s.statsTab === 'expense' ? 'active' : ''}" data-action="selectStatsTab" data-value="expense">Gastos</div>
+        <div class="grid2" style="gap:14px">
+          <div>
+            <div class="label-caps" style="color:oklch(45% 0.13 155)">Ingresos</div>
+            <div style="font-size:25px;font-weight:800;color:var(--ink);margin-top:4px">${esc(App.fmt(incomeSum))}</div>
+            ${deltaChip(incomeDelta, incomeDeltaGood)}
+          </div>
+          <div>
+            <div class="label-caps" style="color:oklch(58% 0.19 25)">Gastos</div>
+            <div style="font-size:25px;font-weight:800;color:var(--ink);margin-top:4px">${esc(App.fmt(expenseSum))}</div>
+            ${deltaChip(expenseDelta, expenseDeltaGood)}
+          </div>
         </div>
-        <div class="label-caps" style="margin-top:16px;color:${activeTabColor}">${s.statsTab === 'income' ? 'Ingresos' : 'Gastos'}</div>
-        <div style="font-size:34px;font-weight:800;color:${activeTabColor};margin-top:4px">${esc(App.fmt(activeSum))}</div>
-        <div style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;border-radius:9999px;background:oklch(93% 0.05 155);color:oklch(38% 0.1 155);font-size:12px;font-weight:700">${esc(App.fmtSigned(deltaVsPrev))}<span style="color:var(--ink-soft);font-weight:600"> vs. periodo anterior</span></div>
+        <div style="height:1px;background:var(--divider);margin:16px 0"></div>
+        <div class="grid2" style="gap:14px">
+          <div><div class="label-caps">Balance</div><div style="font-size:19px;font-weight:800;color:var(--ink);margin-top:4px">${esc(App.fmt(balance))}</div></div>
+          <div><div class="label-caps">Transacciones</div><div style="font-size:19px;font-weight:800;color:var(--ink);margin-top:4px">${incomeList.length + expenseList.length}</div></div>
+        </div>
       </div>
 
       <div class="card" style="margin-top:16px;border-radius:9999px;padding:5px;display:flex">${periodChips}</div>
@@ -1338,14 +1348,6 @@
         <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodPrev">${Icons.arrowLeft()}</button>
         <div style="font-size:15px;font-weight:800;color:var(--ink);text-align:center;padding:0 6px">${esc(range.label)}</div>
         <button type="button" class="icon-btn" style="width:32px;height:32px;background:oklch(94% 0.005 90)" data-action="navPeriodNext">${Icons.arrowRight()}</button>
-      </div>
-
-      <div class="section-title-sm" style="margin-top:24px">Resumen del periodo</div>
-      <div class="grid2" style="margin-top:10px">
-        <div class="stat-tile" style="border-left:3px solid oklch(58% 0.15 155)"><div class="stat-label">Ingresos</div><div class="stat-value" style="color:oklch(45% 0.13 155)">${esc(App.fmt(incomeSum))}</div></div>
-        <div class="stat-tile" style="border-left:3px solid oklch(58% 0.19 25)"><div class="stat-label">Gastos</div><div class="stat-value" style="color:oklch(58% 0.19 25)">${esc(App.fmt(expenseSum))}</div></div>
-        <div class="stat-tile"><div class="stat-label">Balance</div><div class="stat-value">${esc(App.fmt(balance))}</div></div>
-        <div class="stat-tile"><div class="stat-label">Transacciones</div><div class="stat-value">${incomeList.length + expenseList.length}</div></div>
       </div>
 
       ${categoryBudgetHtml}
@@ -1375,7 +1377,13 @@
         </div>
       </div>
 
-      <div class="section-title-sm" style="margin-top:24px">${s.statsTab === 'income' ? 'Ingresos' : 'Gastos'} por categoría</div>
+      <div class="section-title-sm" style="margin-top:24px">Por categoría</div>
+      <div class="card" style="margin-top:10px;border-radius:9999px;padding:5px;display:flex">
+        <div class="segmented" style="flex:1">
+          <div class="seg ${s.statsTab === 'income' ? 'active' : ''}" data-action="selectStatsTab" data-value="income">Ingresos</div>
+          <div class="seg ${s.statsTab === 'expense' ? 'active' : ''}" data-action="selectStatsTab" data-value="expense">Gastos</div>
+        </div>
+      </div>
       ${breakdownHtml}
       <div style="height:24px"></div>
     </div>`;
