@@ -18,6 +18,12 @@
   const FREQ_LABELS = { weekly: 'Semanal', monthly: 'Mensual', annual: 'Anual' };
   const EXPENSE_CATS = ['Supermercado', 'Restaurantes', 'Transporte', 'Vivienda', 'Ocio', 'Salud', 'Compras', 'Suscripciones', 'Otros'];
   const INCOME_CATS = ['Nómina', 'Freelance', 'Regalos', 'Otros'];
+  const RECURRING_PRESETS = {
+    rent: { label: 'Alquiler / Hipoteca', catName: 'Vivienda', note: 'Alquiler' },
+    health: { label: 'Médico privado', catName: 'Salud', note: 'Seguro médico' },
+    gym: { label: 'Gimnasio', catName: 'Gimnasio', note: 'Cuota gimnasio' },
+    sub: { label: 'Suscripción', catName: 'Suscripciones', note: '' },
+  };
   const STORAGE_KEY = 'patrimonio_app_v1';
 
   // ============================================================
@@ -203,6 +209,8 @@
         editingTxId: null, txEditAmount: '', txEditDate: '', txEditCategoryId: '', txEditAccountId: '', txEditNote: '',
         editingCategoryId: null, catKind: 'daily', catBudgetType: 'amount', catBudgetValue: '', catBudgetReturnTo: null,
         jornal: 0, editingJornal: false, editingJornalValue: '',
+        recurringInlineOpen: false, editingRecurringId: null,
+        recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
       };
     },
 
@@ -497,6 +505,89 @@
       if (!this.state.editingPlanId) return;
       if (!window.confirm('¿Eliminar este plan?')) return;
       this.setState({ recurringRules: this.state.recurringRules.filter(r => r.id !== this.state.editingPlanId), editingPlanId: null, modal: null });
+    },
+    toggleRecurringInline() { this.setState({ recurringInlineOpen: !this.state.recurringInlineOpen }); },
+    openRecurringEdit(id) {
+      const rule = this.state.recurringRules.find(r => r.id === id);
+      if (!rule || rule.type === 'investment') return;
+      this.setState({
+        editingRecurringId: id,
+        recEditType: rule.type,
+        recEditAmount: String(rule.amount),
+        recEditCategoryId: rule.categoryId || '',
+        recEditAccountId: rule.accountId,
+        recEditFreq: rule.frequency,
+        recEditDay: String(new Date(rule.nextDate + 'T00:00:00').getDate()),
+        recEditNote: rule.note || '',
+        modal: 'recurringEdit',
+      });
+    },
+    openRecurringNew(presetKey) {
+      const preset = RECURRING_PRESETS[presetKey];
+      let categories = this.state.categories;
+      let categoryId = '';
+      let note = '';
+      if (preset) {
+        let cat = categories.find(c => c.name === preset.catName && c.type === 'expense');
+        if (!cat) {
+          cat = { id: uid(), name: preset.catName, type: 'expense', color: PALETTE[categories.length % PALETTE.length], kind: 'fixed' };
+          categories = [...categories, cat];
+        }
+        categoryId = cat.id;
+        note = preset.note;
+      }
+      this.setState({
+        categories,
+        editingRecurringId: null,
+        recEditType: 'expense',
+        recEditAmount: '',
+        recEditCategoryId: categoryId,
+        recEditAccountId: this.state.accounts[0] ? this.state.accounts[0].id : '',
+        recEditFreq: 'monthly',
+        recEditDay: String(new Date().getDate()),
+        recEditNote: note,
+        modal: 'recurringEdit',
+      });
+    },
+    saveRecurringEdit() {
+      const amt = parseNum(this.state.recEditAmount);
+      if (!amt || amt <= 0) { alert('Introduce un importe válido'); return; }
+      if (!this.state.recEditAccountId) { alert('Selecciona una cuenta'); return; }
+      const day = Math.min(28, Math.max(1, parseInt(this.state.recEditDay, 10) || 1));
+      const today = todayISO();
+      const computeNextDate = (baseIso) => {
+        const d = new Date(baseIso + 'T00:00:00'); d.setDate(day);
+        let nextDate = d.toISOString().slice(0, 10);
+        if (nextDate < today) { d.setMonth(d.getMonth() + 1); nextDate = d.toISOString().slice(0, 10); }
+        return nextDate;
+      };
+      let recurringRules;
+      if (this.state.editingRecurringId) {
+        recurringRules = this.state.recurringRules.map(r => r.id !== this.state.editingRecurringId ? r : {
+          ...r,
+          amount: amt,
+          categoryId: this.state.recEditCategoryId || null,
+          accountId: this.state.recEditAccountId,
+          frequency: this.state.recEditFreq,
+          note: this.state.recEditNote,
+          nextDate: computeNextDate(r.nextDate),
+        });
+      } else {
+        const rule = {
+          id: uid(), type: this.state.recEditType, amount: amt,
+          accountId: this.state.recEditAccountId, categoryId: this.state.recEditCategoryId || null,
+          note: this.state.recEditNote, frequency: this.state.recEditFreq,
+          nextDate: computeNextDate(today),
+        };
+        recurringRules = [...this.state.recurringRules, rule];
+      }
+      this.setState({ recurringRules, editingRecurringId: null, modal: null });
+    },
+    deleteRecurringFromEdit() {
+      const id = this.state.editingRecurringId;
+      if (!id) { this.setState({ modal: null }); return; }
+      if (!window.confirm('¿Eliminar esta regla recurrente?')) return;
+      this.setState({ recurringRules: this.state.recurringRules.filter(r => r.id !== id), editingRecurringId: null, modal: null });
     },
 
     // -------- accounts --------
@@ -1678,7 +1769,7 @@
       let title;
       if (r.type === 'investment') { const f = s.investments.find(x => x.id === r.fundId); title = r.note || (f ? ('Plan ' + f.name) : 'Plan de inversión'); }
       else { const cat = s.categories.find(c => c.id === r.categoryId); title = r.note || (cat ? cat.name : (r.type === 'income' ? 'Ingreso' : 'Gasto')); }
-      return { id: r.id, title, amountText: App.fmtAbs(r.amount), freqLabel: FREQ_LABELS[r.frequency] };
+      return { id: r.id, type: r.type, title, amountText: App.fmtAbs(r.amount), freqLabel: FREQ_LABELS[r.frequency] };
     });
 
     return `
@@ -1734,18 +1825,32 @@
           </div>
         </div>` : ''}
 
-        ${allRules.length ? `
-          <div class="label-caps" style="margin-top:22px">Transacciones recurrentes</div>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <button type="button" class="card row-flex between" style="margin-top:22px;padding:16px;cursor:pointer;width:100%;border:none;text-align:left" data-action="toggleRecurringInline">
+          <div style="font-size:14px;font-weight:700;color:var(--ink)">Transacciones recurrentes${allRules.length ? ' (' + allRules.length + ')' : ''}</div>
+          ${s.recurringInlineOpen ? Icons.chevronUp('oklch(60% 0.01 90)') : Icons.chevronDown('oklch(60% 0.01 90)')}
+        </button>
+
+        ${s.recurringInlineOpen ? `
+        <div class="card" style="margin-top:10px;padding:14px">
+          <div class="label-caps">Gastos fijos predefinidos</div>
+          <div class="hscroll gap10" style="margin-top:8px;padding-bottom:4px">
+            ${Object.entries(RECURRING_PRESETS).map(([key, p]) => `<div class="pill-btn" style="flex-shrink:0" data-action="openRecurringNew" data-id="${key}">${esc(p.label)}</div>`).join('')}
+          </div>
+
+          ${allRules.length ? `
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
             ${allRules.map(r => `
-              <div class="card row-flex between" style="padding:12px 14px">
+              <button type="button" class="card row-flex between" style="padding:12px 14px;width:100%;border:none;text-align:left;cursor:pointer" data-action="${r.type === 'investment' ? 'openPlanEdit' : 'openRecurringEdit'}" data-id="${r.id}">
                 <div>
                   <div style="font-size:13px;font-weight:700;color:var(--ink)">${esc(r.title)}</div>
                   <div style="font-size:11px;color:var(--ink-soft);margin-top:2px">${esc(r.amountText)} · ${r.freqLabel}</div>
                 </div>
-                <button type="button" class="icon-btn" style="width:26px;height:26px;background:oklch(94% 0.04 25)" data-action="deleteRecurring" data-id="${r.id}">${Icons.closeThin('oklch(58% 0.19 25)')}</button>
-              </div>`).join('')}
-          </div>` : ''}
+                ${Icons.pencil()}
+              </button>`).join('')}
+          </div>` : `<div class="empty-note" style="margin-top:14px">Aún no tienes transacciones recurrentes.</div>`}
+
+          <button type="button" class="btn-secondary" style="margin-top:14px;padding:12px;font-size:13px" data-action="openRecurringNew" data-id="blank">+ Nuevo recurrente</button>
+        </div>` : ''}
 
         <div class="label-caps" style="margin-top:22px">Datos</div>
         <button type="button" style="margin-top:8px;width:100%;padding:14px;border-radius:14px;border:none;background:oklch(93% 0.05 155);color:oklch(38% 0.1 155);font-size:14px;font-weight:700;cursor:pointer;text-align:left" data-action="loadDemoData">Cargar datos de ejemplo</button>
@@ -2024,6 +2129,55 @@
     </div>`;
   };
 
+  // -------- recurring rule edit --------
+  Render.modalRecurringEdit = (App) => {
+    const s = App.state;
+    const isNew = !s.editingRecurringId;
+    const accounts = App.sortedAccounts();
+    const cats = s.categories.filter(c => c.type === s.recEditType);
+    const categoryOptions = cats.map(c => `
+      <button type="button" class="category-chip" data-action="selectRecEditCategory" data-id="${c.id}">
+        <span class="cat-icon" style="background:${c.color};box-shadow:${ringFor(c.color, s.recEditCategoryId === c.id)}">${Icons.category(c.name)}</span>
+        <span class="cat-name">${esc(c.name)}</span>
+      </button>`).join('');
+    return `
+    <div class="modal-overlay">
+      ${Render.modalHeaderBack(isNew ? 'Nuevo recurrente' : 'Editar recurrente')}
+      <div class="modal-body">
+        ${isNew ? `
+          <div class="label-caps" style="margin-top:6px">Tipo</div>
+          ${Render.chipToggle([['expense', 'Gasto'], ['income', 'Ingreso']], s.recEditType, 'selectRecEditType')}
+        ` : ''}
+
+        <div class="card" style="margin-top:16px;border-radius:20px">
+          <div class="label-caps">Importe</div>
+          <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
+            <input type="text" inputmode="decimal" data-bind="recEditAmount" value="${esc(s.recEditAmount)}" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:140px"/>
+            <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">€</span>
+          </div>
+        </div>
+
+        <div class="label-caps" style="margin-top:18px">Categoría</div>
+        <div class="hscroll gap14" style="margin-top:8px;padding-bottom:4px">${categoryOptions}</div>
+
+        <div class="label-caps" style="margin-top:14px">Día del mes</div>
+        <input type="text" inputmode="numeric" class="field-input" style="margin-top:8px;font-weight:700;background:oklch(96% 0.003 90)" data-bind="recEditDay" value="${esc(s.recEditDay)}"/>
+
+        <div class="label-caps" style="margin-top:16px">Frecuencia</div>
+        <div style="display:flex;background:oklch(96% 0.003 90);border-radius:12px;padding:4px;margin-top:8px">${Render.freqChips(s.recEditFreq, 'selectRecEditFreq', 'short')}</div>
+
+        <div class="label-caps" style="margin-top:16px">Cuenta</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${accounts.map(a => Render.accChipFlat(a, s.recEditAccountId, 'selectRecEditAccount')).join('')}</div>
+
+        <div class="label-caps" style="margin-top:16px">Nota (opcional)</div>
+        <input type="text" class="field-input" style="margin-top:8px" data-bind="recEditNote" value="${esc(s.recEditNote)}" placeholder="Ej. Alquiler piso"/>
+
+        <button type="button" style="margin-top:22px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:15px;font-weight:800;cursor:pointer" data-action="saveRecurringEdit">${isNew ? 'Crear' : 'Guardar cambios'}</button>
+        ${!isNew ? `<button type="button" class="btn-danger-text" style="margin-top:14px" data-action="deleteRecurringFromEdit">Eliminar</button>` : ''}
+      </div>
+    </div>`;
+  };
+
   // -------- all transactions --------
   Render.txFilteredListInner = (App) => {
     const rows = App.filteredTxList();
@@ -2125,6 +2279,7 @@
       case 'allTx': return Render.modalAllTx(App);
       case 'txDetail': return Render.modalTxDetail(App);
       case 'categoryBudget': return Render.modalCategoryBudget(App);
+      case 'recurringEdit': return Render.modalRecurringEdit(App);
       default: return '';
     }
   };
@@ -2251,6 +2406,10 @@
     selectTxEditAccount: (s, id) => { s.txEditAccountId = id; },
     selectCatKind: (s, id, v) => { s.catKind = v; },
     selectCatBudgetType: (s, id, v) => { s.catBudgetType = v; },
+    selectRecEditType: (s, id, v) => { s.recEditType = v; s.recEditCategoryId = ''; },
+    selectRecEditCategory: (s, id) => { s.recEditCategoryId = id; },
+    selectRecEditAccount: (s, id) => { s.recEditAccountId = id; },
+    selectRecEditFreq: (s, id, v) => { s.recEditFreq = v; },
   };
 
   const ACTIONS = {
@@ -2286,6 +2445,11 @@
     openPlanEdit: (id) => App.openPlanEdit(id),
     savePlanEditPage: () => App.savePlanEditPage(),
     deletePlanFromPage: () => App.deletePlanFromPage(),
+    toggleRecurringInline: () => App.toggleRecurringInline(),
+    openRecurringEdit: (id) => App.openRecurringEdit(id),
+    openRecurringNew: (id) => App.openRecurringNew(id),
+    saveRecurringEdit: () => App.saveRecurringEdit(),
+    deleteRecurringFromEdit: () => App.deleteRecurringFromEdit(),
     openAddMoney: (id) => App.openAddMoney(id),
     addMoney: () => App.addMoney(),
     openTransfer: () => App.openTransfer(),
