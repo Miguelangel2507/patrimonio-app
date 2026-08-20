@@ -1110,17 +1110,6 @@
         <button type="button" class="icon-btn" style="width:40px;height:40px" data-action="openSettings">${Icons.gear()}</button>
       </div>
 
-      <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
-        <div>
-          <div class="label-caps">Jornal</div>
-          ${s.editingJornal
-            ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
-            : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
-          <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
-        </div>
-        ${!s.editingJornal ? Icons.pencil() : ''}
-      </button>
-
       <div class="net-worth-block">
         <div class="row-flex" style="justify-content:center;gap:6px;color:var(--ink-soft);font-size:14px;font-weight:600">
           <span>Patrimonio neto</span>
@@ -1698,6 +1687,17 @@
       <div class="modal-body">
         <div class="label-caps" style="margin-top:8px">Perfil</div>
         <input type="text" class="field-input" style="margin-top:8px;font-weight:600" data-bind="userName" value="${esc(s.userName)}"/>
+
+        <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
+          <div>
+            <div class="label-caps">Jornal</div>
+            ${s.editingJornal
+              ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
+              : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
+          </div>
+          ${!s.editingJornal ? Icons.pencil() : ''}
+        </button>
 
         <div class="card row-flex between" style="margin-top:20px;padding:16px;cursor:pointer" data-action="toggleHide">
           <div>
