@@ -439,7 +439,7 @@
         cleanup();
       };
       const script = document.createElement('script');
-      script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?gid=' + SHEET_GID + '&tqx=out:json;responseHandler=' + cbName;
+      script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?gid=' + SHEET_GID + '&tqx=out:json;responseHandler:' + cbName;
       script.onerror = () => { if (!settled) { this.setState({ sheetPricesStatus: 'error' }); cleanup(); } };
       document.body.appendChild(script);
     },
