@@ -217,7 +217,7 @@
         recurringInlineOpen: false, editingRecurringId: null,
         recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
         monthlyCloses: [], priceSnapshots: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null, fondosOpen: true,
-        editingMonthKey: null, monthCloseValue: '',
+        editingMonthKey: null, monthCloseValue: '', monthCloseMode: 'value', monthClosePercent: '',
       };
     },
 
@@ -336,25 +336,20 @@
       });
       return total;
     },
-    // Modified Dietz monthly return for 'YYYY-MM'. Real BMV/EMV come from
-    // monthlyCloses when available; otherwise each end falls back to
-    // marketValueAsOfDate. The "real" flag (dot in the UI) reflects only
-    // whether THIS month's end has a real snapshot — a month can have a real
-    // end and an estimated start at the same time.
-    monthlyReturn(monthKey) {
+    // Shared Modified Dietz inputs for a month: the starting value (BMV, from
+    // the prior real close or an estimate) and the cash flows in/out during
+    // the month. Reused by monthlyReturn() and by the "I know the %" manual
+    // close entry, which needs to solve for the EMV that a given return
+    // implies against these same numbers.
+    monthDietzBase(monthKey) {
       const [y, m] = monthKey.split('-').map(Number);
       const monthStart = new Date(y, m - 1, 1);
       const monthEnd = new Date(y, m, 0);
       const monthStartISO = monthStart.toISOString().slice(0, 10);
       const monthEndISO = monthEnd.toISOString().slice(0, 10);
       const daysInMonth = monthEnd.getDate();
-      const closes = this.state.monthlyCloses;
-      const priorClose = closes.filter(c => c.month < monthKey).sort((a, b) => a.month < b.month ? -1 : 1).pop();
-      const thisClose = closes.find(c => c.month === monthKey);
-      const now = new Date();
-      const isCurrentMonth = now.getFullYear() === y && now.getMonth() === m - 1;
+      const priorClose = this.state.monthlyCloses.filter(c => c.month < monthKey).sort((a, b) => a.month < b.month ? -1 : 1).pop();
       const bmv = priorClose ? priorClose.market : this.marketValueAsOfDate(monthStartISO);
-
       let cfTotal = 0, weightedCf = 0;
       this.state.investments.forEach(f => {
         (f.ops || []).forEach(op => {
@@ -367,6 +362,21 @@
           }
         });
       });
+      return { monthStartISO, monthEndISO, daysInMonth, bmv, cfTotal, weightedCf };
+    },
+    // Modified Dietz monthly return for 'YYYY-MM'. Real BMV/EMV come from
+    // monthlyCloses when available; otherwise each end falls back to
+    // marketValueAsOfDate. The "real" flag (dot in the UI) reflects only
+    // whether THIS month's end has a real snapshot — a month can have a real
+    // end and an estimated start at the same time.
+    monthlyReturn(monthKey) {
+      const [y, m] = monthKey.split('-').map(Number);
+      const monthEnd = new Date(y, m, 0);
+      const closes = this.state.monthlyCloses;
+      const thisClose = closes.find(c => c.month === monthKey);
+      const now = new Date();
+      const isCurrentMonth = now.getFullYear() === y && now.getMonth() === m - 1;
+      const { monthStartISO, bmv, cfTotal, weightedCf } = this.monthDietzBase(monthKey);
 
       let emv, real;
       if (thisClose) { emv = thisClose.market; real = true; }
@@ -391,21 +401,38 @@
     // total value from elsewhere (a broker statement, another tracking app).
     openMonthCloseEdit(monthKey) {
       const existing = this.state.monthlyCloses.find(c => c.month === monthKey);
-      this.setState({ editingMonthKey: monthKey, monthCloseValue: existing ? numToInputStr(existing.market) : '', modal: 'monthCloseEdit' });
+      this.setState({ editingMonthKey: monthKey, monthCloseValue: existing ? numToInputStr(existing.market) : '', monthCloseMode: 'value', monthClosePercent: '', modal: 'monthCloseEdit' });
+    },
+    // Resolves the manual close entry (either a known total value, or a known
+    // % return for the month — the latter is solved for the equivalent EMV
+    // against this app's own BMV/cash-flow numbers for that month, since most
+    // external trackers only show a percentage, not the fund's raw total).
+    resolveMonthCloseValue() {
+      const s = this.state;
+      if (s.monthCloseMode === 'value') {
+        const value = parseNum(s.monthCloseValue);
+        return value >= 0 ? value : null;
+      }
+      const pct = parseNum(s.monthClosePercent);
+      if (s.monthClosePercent.trim() === '' || isNaN(pct)) return null;
+      const { bmv, cfTotal, weightedCf } = this.monthDietzBase(s.editingMonthKey);
+      const denom = bmv + weightedCf;
+      if (Math.abs(denom) < 1e-6) return null;
+      return (pct / 100) * denom + bmv + cfTotal;
     },
     saveMonthClose() {
       const monthKey = this.state.editingMonthKey;
-      const value = parseNum(this.state.monthCloseValue);
-      if (!monthKey || !(value >= 0)) return;
+      const value = this.resolveMonthCloseValue();
+      if (!monthKey || value === null) return;
       const [y, m] = monthKey.split('-').map(Number);
       const invested = this.investedAsOfDate(new Date(y, m, 1).toISOString().slice(0, 10));
       const monthlyCloses = [...this.state.monthlyCloses.filter(c => c.month !== monthKey), { month: monthKey, market: value, invested, perFund: {} }]
         .sort((a, b) => a.month < b.month ? -1 : 1);
-      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '' });
+      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '', monthClosePercent: '' });
     },
     deleteMonthClose() {
       const monthlyCloses = this.state.monthlyCloses.filter(c => c.month !== this.state.editingMonthKey);
-      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '' });
+      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '', monthClosePercent: '' });
     },
     // Chains the year's monthly Modified Dietz returns; months with no data
     // (nothing invested yet) are skipped rather than counted as 0%.
@@ -2368,18 +2395,27 @@
     const [y, m] = (s.editingMonthKey || '2026-01').split('-').map(Number);
     const label = MONTHS[m - 1] + ' de ' + y;
     const hasExisting = s.monthlyCloses.some(c => c.month === s.editingMonthKey);
+    const isValueMode = s.monthCloseMode === 'value';
     return `
     <div class="modal-overlay">
       ${Render.modalHeaderBack('Cierre real')}
       <div class="modal-body">
         <div style="font-size:22px;font-weight:800;color:var(--ink);text-transform:capitalize">${esc(label)}</div>
-        <div style="font-size:13px;color:var(--ink-soft);margin-top:4px">Introduce el valor total de tu cartera a cierre de ese mes (por ejemplo, el que tengas en otra app donde lo registres). Sustituye a la estimación automática para ese mes.</div>
-        <div class="card" style="margin-top:20px;border-radius:20px">
-          <div class="label-caps">Valor de mercado</div>
-          <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
-            <input type="text" inputmode="decimal" data-bind="monthCloseValue" value="${esc(s.monthCloseValue)}" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:180px"/>
-            <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">€</span>
-          </div>
+        <div style="font-size:13px;color:var(--ink-soft);margin-top:4px">Sustituye la estimación automática de ese mes. Puedes introducir el valor total de tu cartera a cierre de mes, o directamente el % de rentabilidad si es lo único que te da tu otra app.</div>
+        ${Render.chipToggle([['value', 'Valor (€)'], ['percent', '% rentabilidad']], s.monthCloseMode, 'selectMonthCloseMode')}
+        <div class="card" style="margin-top:16px;border-radius:20px">
+          ${isValueMode ? `
+            <div class="label-caps">Valor de mercado</div>
+            <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
+              <input type="text" inputmode="decimal" data-bind="monthCloseValue" value="${esc(s.monthCloseValue)}" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:180px"/>
+              <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">€</span>
+            </div>` : `
+            <div class="label-caps">Rentabilidad del mes</div>
+            <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
+              <input type="text" inputmode="decimal" data-bind="monthClosePercent" value="${esc(s.monthClosePercent)}" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:140px"/>
+              <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">%</span>
+            </div>
+            <div style="font-size:12px;color:var(--ink-soft);margin-top:8px">Se calcula el valor equivalente usando tus aportes/retiradas reales de ese mes.</div>`}
         </div>
         <button type="button" style="margin-top:18px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:15px;font-weight:800;cursor:pointer" data-action="saveMonthClose">Guardar cierre</button>
         ${hasExisting ? `<button type="button" class="btn-danger-text" style="margin-top:18px" data-action="deleteMonthClose">Quitar cierre y volver a estimación automática</button>` : ''}
@@ -2708,6 +2744,7 @@
     selectRecEditCategory: (s, id) => { s.recEditCategoryId = id; },
     selectRecEditAccount: (s, id) => { s.recEditAccountId = id; },
     selectRecEditFreq: (s, id, v) => { s.recEditFreq = v; },
+    selectMonthCloseMode: (s, id, v) => { s.monthCloseMode = v; },
   };
 
   const ACTIONS = {
