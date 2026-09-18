@@ -217,6 +217,7 @@
         recurringInlineOpen: false, editingRecurringId: null,
         recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
         monthlyCloses: [], priceSnapshots: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null, fondosOpen: true,
+        editingMonthKey: null, monthCloseValue: '',
       };
     },
 
@@ -385,6 +386,27 @@
       return { returnPct, real, hasData };
     },
     navInvestYear(dir) { this.setState({ investYear: this.state.investYear + dir }); },
+    // Manual override for a month's real close, for when the app wasn't open
+    // on the last day to capture it automatically and the user knows the real
+    // total value from elsewhere (a broker statement, another tracking app).
+    openMonthCloseEdit(monthKey) {
+      const existing = this.state.monthlyCloses.find(c => c.month === monthKey);
+      this.setState({ editingMonthKey: monthKey, monthCloseValue: existing ? numToInputStr(existing.market) : '', modal: 'monthCloseEdit' });
+    },
+    saveMonthClose() {
+      const monthKey = this.state.editingMonthKey;
+      const value = parseNum(this.state.monthCloseValue);
+      if (!monthKey || !(value >= 0)) return;
+      const [y, m] = monthKey.split('-').map(Number);
+      const invested = this.investedAsOfDate(new Date(y, m, 1).toISOString().slice(0, 10));
+      const monthlyCloses = [...this.state.monthlyCloses.filter(c => c.month !== monthKey), { month: monthKey, market: value, invested, perFund: {} }]
+        .sort((a, b) => a.month < b.month ? -1 : 1);
+      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '' });
+    },
+    deleteMonthClose() {
+      const monthlyCloses = this.state.monthlyCloses.filter(c => c.month !== this.state.editingMonthKey);
+      this.setState({ monthlyCloses, modal: null, editingMonthKey: null, monthCloseValue: '' });
+    },
     // Chains the year's monthly Modified Dietz returns; months with no data
     // (nothing invested yet) are skipped rather than counted as 0%.
     annualReturn(year) {
@@ -1679,7 +1701,7 @@
     const MONTH_ABBR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
     const yearMonths = MONTH_ABBR.map((label, i) => {
       const key = s.investYear + '-' + String(i + 1).padStart(2, '0');
-      return { label, ...App.monthlyReturn(key) };
+      return { label, key, ...App.monthlyReturn(key) };
     });
     const monthCellsHtml = yearMonths.map(mo => {
       const has = mo.hasData && mo.returnPct !== null;
@@ -1687,7 +1709,7 @@
       const bg = !has ? 'oklch(96% 0.003 90)' : (pos ? 'oklch(93% 0.05 155)' : 'oklch(94% 0.04 25)');
       const fg = !has ? 'var(--ink-soft)' : (pos ? 'oklch(38% 0.1 155)' : 'oklch(50% 0.15 25)');
       return `
-        <div style="background:${bg};border-radius:14px;padding:11px 6px;text-align:center;position:relative">
+        <div data-action="openMonthCloseEdit" data-id="${mo.key}" style="background:${bg};border-radius:14px;padding:11px 6px;text-align:center;position:relative;cursor:pointer">
           ${mo.real ? `<span style="position:absolute;top:7px;right:8px;width:5px;height:5px;border-radius:9999px;background:${fg};opacity:0.7"></span>` : ''}
           <div style="font-size:10px;font-weight:700;color:${fg};opacity:0.75">${mo.label}</div>
           <div style="font-size:13px;font-weight:800;color:${fg};margin-top:4px">${has ? esc(App.fmtPct(mo.returnPct)) : '·'}</div>
@@ -1709,7 +1731,7 @@
           <span style="font-size:13px;font-weight:700;color:var(--ink)">Rentabilidad ${s.investYear}</span>
           <span style="font-size:15px;font-weight:800;color:${yearReturn === null ? 'var(--ink-soft)' : (yearReturn >= 0 ? pnlColor : 'oklch(58% 0.19 25)')}">${yearReturn === null ? '—' : esc(App.fmtPct(yearReturn))}</span>
         </div>
-        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;line-height:1.5">Rentabilidad mensual ponderada por flujos (Modified Dietz). El punto · marca meses con cierre real (foto del valor a fin de mes, guardada automáticamente); el resto se estima con el precio de tus compras.</div>
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;line-height:1.5">Rentabilidad mensual ponderada por flujos (Modified Dietz). El punto · marca meses con cierre real; el resto se estima con el precio de tus compras. Toca un mes para introducir tú el valor real (por ejemplo, si lo tienes registrado en otra app) y corregir la estimación.</div>
       </div>` : '';
 
     // -------- annual return vs. invested --------
@@ -2340,6 +2362,31 @@
     </div>`;
   };
 
+  // -------- manual monthly close override --------
+  Render.modalMonthClose = (App) => {
+    const s = App.state;
+    const [y, m] = (s.editingMonthKey || '2026-01').split('-').map(Number);
+    const label = MONTHS[m - 1] + ' de ' + y;
+    const hasExisting = s.monthlyCloses.some(c => c.month === s.editingMonthKey);
+    return `
+    <div class="modal-overlay">
+      ${Render.modalHeaderBack('Cierre real')}
+      <div class="modal-body">
+        <div style="font-size:22px;font-weight:800;color:var(--ink);text-transform:capitalize">${esc(label)}</div>
+        <div style="font-size:13px;color:var(--ink-soft);margin-top:4px">Introduce el valor total de tu cartera a cierre de ese mes (por ejemplo, el que tengas en otra app donde lo registres). Sustituye a la estimación automática para ese mes.</div>
+        <div class="card" style="margin-top:20px;border-radius:20px">
+          <div class="label-caps">Valor de mercado</div>
+          <div style="display:flex;align-items:baseline;gap:6px;margin-top:6px">
+            <input type="text" inputmode="decimal" data-bind="monthCloseValue" value="${esc(s.monthCloseValue)}" style="border:none;background:transparent;font-size:32px;font-weight:800;color:var(--ink);width:180px"/>
+            <span style="font-size:18px;font-weight:700;color:oklch(55% 0.01 90)">€</span>
+          </div>
+        </div>
+        <button type="button" style="margin-top:18px;width:100%;padding:16px;border-radius:9999px;border:none;background:oklch(58% 0.15 155);color:#fff;font-size:15px;font-weight:800;cursor:pointer" data-action="saveMonthClose">Guardar cierre</button>
+        ${hasExisting ? `<button type="button" class="btn-danger-text" style="margin-top:18px" data-action="deleteMonthClose">Quitar cierre y volver a estimación automática</button>` : ''}
+      </div>
+    </div>`;
+  };
+
   // -------- category budget --------
   Render.chipToggle = (options, current, action) => `
     <div style="display:flex;background:oklch(96% 0.003 90);border-radius:12px;padding:4px;margin-top:8px">
@@ -2530,6 +2577,7 @@
       case 'txDetail': return Render.modalTxDetail(App);
       case 'categoryBudget': return Render.modalCategoryBudget(App);
       case 'recurringEdit': return Render.modalRecurringEdit(App);
+      case 'monthCloseEdit': return Render.modalMonthClose(App);
       default: return '';
     }
   };
@@ -2698,6 +2746,9 @@
     openPlanEdit: (id) => App.openPlanEdit(id),
     savePlanEditPage: () => App.savePlanEditPage(),
     deletePlanFromPage: () => App.deletePlanFromPage(),
+    openMonthCloseEdit: (id) => App.openMonthCloseEdit(id),
+    saveMonthClose: () => App.saveMonthClose(),
+    deleteMonthClose: () => App.deleteMonthClose(),
     toggleRecurringInline: () => App.toggleRecurringInline(),
     openRecurringEdit: (id) => App.openRecurringEdit(id),
     openRecurringNew: (id) => App.openRecurringNew(id),
