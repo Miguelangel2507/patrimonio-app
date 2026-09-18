@@ -25,7 +25,8 @@
     sub: { label: 'Suscripción', catName: 'Suscripciones', note: '' },
   };
   const STORAGE_KEY = 'patrimonio_app_v1';
-  const SHEET_ID = '1HH2NiaaXDIKJwmATv3Ofk0mBmfBhwUxDbjwpRrTHBAw';
+  const SHEET_ID = '1YXFhoWvz4Q0skOrt8x-PVn5Imvh1DWfWFt8yaju9GzI';
+  const SHEET_GID = '0';
 
   // ============================================================
   // Small helpers
@@ -438,7 +439,7 @@
         cleanup();
       };
       const script = document.createElement('script');
-      script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:json;responseHandler=' + cbName;
+      script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?gid=' + SHEET_GID + '&tqx=out:json;responseHandler=' + cbName;
       script.onerror = () => { if (!settled) { this.setState({ sheetPricesStatus: 'error' }); cleanup(); } };
       document.body.appendChild(script);
     },
