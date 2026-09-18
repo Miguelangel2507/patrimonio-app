@@ -579,7 +579,7 @@
         catKind: cat.kind || 'daily',
         catBudgetType: cat.budgetType || 'amount',
         catBudgetValue: cat.budgetValue ? numToInputStr(cat.budgetValue) : '',
-        catBudgetReturnTo: this.state.modal === 'settings' ? 'settings' : null,
+        catBudgetReturnTo: (this.state.modal === 'settings' || this.state.modal === 'recurringEdit') ? this.state.modal : null,
         modal: 'categoryBudget',
       });
     },
@@ -615,6 +615,49 @@
         .filter(r => r.spent > 0 || r.hasBudget)
         .sort((a, b) => b.spent - a.spent);
       return { rows, total: rows.reduce((a, r) => a + r.spent, 0) };
+    },
+    currentMonthRangeISO() {
+      const now = new Date();
+      return {
+        start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10),
+        end: new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10),
+      };
+    },
+    // Splits this calendar month's Jornal into Fijos / Diarios / Inversión
+    // (real fund contributions, net of any sale — not a manually-tracked
+    // category, since Invertir already has that data) / Ahorro libre
+    // (whatever's left). Mirrors the allocation model from the user's other
+    // budgeting app, adapted to reuse Patrimonio's own transaction data.
+    jornalBreakdown() {
+      const jornal = this.state.jornal || 0;
+      const { start, end } = this.currentMonthRangeISO();
+      let fijos = 0, diarios = 0, inversion = 0;
+      this.state.transactions.forEach(t => {
+        if (t.date < start || t.date > end) return;
+        if (t.type === 'expense') {
+          const cat = this.state.categories.find(c => c.id === t.categoryId);
+          if (cat && (cat.kind || 'daily') === 'fixed') fijos += t.amount; else diarios += t.amount;
+        } else if (t.type === 'investment_buy') inversion += t.amount;
+        else if (t.type === 'investment_sell') inversion -= t.amount;
+      });
+      const libre = jornal - fijos - diarios - inversion;
+      const pct = (n) => jornal > 0 ? (n / jornal * 100) : 0;
+      return { jornal, fijos, diarios, inversion, libre, pctFijos: pct(fijos), pctDiarios: pct(diarios), pctInversion: pct(inversion), pctLibre: pct(libre) };
+    },
+    // A single category's spend vs. its budget for the current calendar
+    // month — used to surface "% del jornal usado" right from the recurring
+    // payment screen, without a separate budget concept living on the rule.
+    categoryThisMonth(categoryId) {
+      const cat = this.state.categories.find(c => c.id === categoryId);
+      if (!cat) return null;
+      const { start, end } = this.currentMonthRangeISO();
+      const spent = this.state.transactions
+        .filter(t => t.type === 'expense' && t.categoryId === categoryId && t.date >= start && t.date <= end)
+        .reduce((a, t) => a + t.amount, 0);
+      const jornal = this.state.jornal || 0;
+      const hasBudget = cat.budgetType === 'amount' || cat.budgetType === 'percent';
+      const limit = cat.budgetType === 'percent' ? (cat.budgetValue / 100) * jornal : (cat.budgetType === 'amount' ? cat.budgetValue : 0);
+      return { cat, spent, hasBudget, limit, budgetType: cat.budgetType, budgetValue: cat.budgetValue };
     },
     deleteCategory(id) {
       if (!window.confirm('¿Eliminar esta categoría?')) return;
@@ -1408,16 +1451,51 @@
         <button type="button" class="icon-btn" style="width:40px;height:40px" data-action="openSettings">${Icons.gear()}</button>
       </div>
 
-      <button type="button" class="card row-flex between" style="margin-top:14px;padding:14px 18px;width:100%;border:none;text-align:left;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
-        <div>
-          <div class="label-caps">Jornal</div>
-          ${s.editingJornal
-            ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
-            : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
-          <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Base para los presupuestos en %</div>
-        </div>
-        ${!s.editingJornal ? Icons.pencil() : ''}
-      </button>
+      ${(() => {
+        const jb = App.jornalBreakdown();
+        const spentTotal = jb.fijos + jb.diarios + jb.inversion;
+        const overBy = jb.jornal > 0 ? (spentTotal - jb.jornal) : 0;
+        const isOver = overBy > 0.01;
+        const segPct = (n) => {
+          if (jb.jornal <= 0) return 0;
+          return isOver ? (spentTotal > 0 ? (n / spentTotal * 100) : 0) : (n / jb.jornal * 100);
+        };
+        const segments = [
+          { label: 'Fijos', val: jb.fijos, pct: segPct(jb.fijos), color: 'oklch(55% 0.14 250)' },
+          { label: 'Diarios', val: jb.diarios, pct: segPct(jb.diarios), color: 'oklch(72% 0.15 70)' },
+          { label: 'Inversión', val: jb.inversion, pct: segPct(jb.inversion), color: 'oklch(55% 0.14 155)' },
+        ];
+        const breakdownHtml = jb.jornal > 0 ? `
+          <div style="margin-top:14px;height:10px;border-radius:9999px;overflow:hidden;display:flex;background:oklch(94% 0.005 90)">
+            ${segments.filter(sg => sg.pct > 0.3).map(sg => `<div style="width:${sg.pct}%;background:${sg.color}"></div>`).join('')}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+            ${segments.map(sg => `
+              <div>
+                <div class="row-flex gap6" style="font-size:11px;color:var(--ink-soft);font-weight:600"><span style="width:7px;height:7px;border-radius:9999px;background:${sg.color};display:inline-block"></span>${sg.label}</div>
+                <div style="font-size:13px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(sg.val))} <span style="font-weight:600;color:var(--ink-soft);font-size:11px">· ${Math.round(sg.pct)}%</span></div>
+              </div>`).join('')}
+            <div>
+              <div class="row-flex gap6" style="font-size:11px;color:var(--ink-soft);font-weight:600"><span style="width:7px;height:7px;border-radius:9999px;background:oklch(88% 0.006 90);display:inline-block"></span>Ahorro libre</div>
+              <div style="font-size:13px;font-weight:800;color:${jb.libre >= 0 ? 'var(--ink)' : 'oklch(58% 0.19 25)'};margin-top:2px">${esc(App.fmt(jb.libre))} <span style="font-weight:600;color:var(--ink-soft);font-size:11px">· ${Math.round(jb.pctLibre)}%</span></div>
+            </div>
+          </div>
+          ${isOver ? `<div style="margin-top:10px;font-size:12px;font-weight:700;color:oklch(58% 0.19 25)">Te has pasado del jornal por ${esc(App.fmt(overBy))}</div>` : ''}` : '';
+        return `
+      <div class="card" style="margin-top:14px;padding:14px 18px">
+        <button type="button" class="row-flex between" style="width:100%;border:none;background:none;text-align:left;padding:0;cursor:${s.editingJornal ? 'default' : 'pointer'}" data-action="${s.editingJornal ? 'none' : 'startEditJornal'}">
+          <div>
+            <div class="label-caps">Jornal</div>
+            ${s.editingJornal
+              ? `<input type="text" inputmode="decimal" data-bind="editingJornalValue" data-blur-action="saveEditJornal" value="${esc(s.editingJornalValue)}" placeholder="0" style="border:none;background:transparent;font-size:18px;font-weight:800;color:var(--ink);margin-top:2px;width:140px;padding:0"/>`
+              : `<div style="font-size:18px;font-weight:800;color:var(--ink);margin-top:2px">${esc(App.fmt(s.jornal || 0))}</div>`}
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">Ingreso mensual de referencia</div>
+          </div>
+          ${!s.editingJornal ? Icons.pencil() : ''}
+        </button>
+        ${breakdownHtml}
+      </div>`;
+      })()}
 
       <div class="net-worth-block">
         <div class="row-flex" style="justify-content:center;gap:6px;color:var(--ink-soft);font-size:14px;font-weight:600">
@@ -2457,6 +2535,24 @@
 
         <div class="label-caps" style="margin-top:18px">Categoría</div>
         <div class="hscroll gap14" style="margin-top:8px;padding-bottom:4px">${categoryOptions}</div>
+
+        ${(() => {
+          if (s.recEditType !== 'expense' || !s.recEditCategoryId) return '';
+          const cs = App.categoryThisMonth(s.recEditCategoryId);
+          if (!cs) return '';
+          const over = cs.hasBudget && cs.spent > cs.limit;
+          const limitLabel = cs.budgetType === 'percent' ? (cs.budgetValue + '% del jornal') : (cs.hasBudget ? ('Límite ' + App.fmt(cs.limit)) : 'Sin presupuesto para esta categoría');
+          const pct = cs.limit > 0 ? Math.min(100, cs.spent / cs.limit * 100) : (cs.hasBudget ? 100 : 0);
+          return `
+          <button type="button" class="card" style="margin-top:12px;width:100%;border:none;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:8px" data-action="openCategoryBudget" data-id="${s.recEditCategoryId}">
+            <div class="row-flex between">
+              <span style="font-size:12px;font-weight:700;color:var(--ink-soft)">Presupuesto de ${esc(cs.cat.name)} este mes</span>
+              <span style="font-size:13px;font-weight:800;color:var(--ink)">${esc(App.fmt(cs.spent))}</span>
+            </div>
+            ${cs.hasBudget ? `<div class="progress-track"><div class="progress-fill" style="background:${over ? 'oklch(58% 0.19 25)' : cs.cat.color};width:${pct}%"></div></div>` : ''}
+            <span style="font-size:11px;color:${over ? 'oklch(58% 0.19 25)' : 'var(--ink-soft)'};font-weight:700">${esc(limitLabel)}${over ? ' · superado por ' + esc(App.fmt(cs.spent - cs.limit)) : ''}</span>
+          </button>`;
+        })()}
 
         <div class="label-caps" style="margin-top:14px">Día del mes</div>
         <input type="text" inputmode="numeric" class="field-input" style="margin-top:8px;font-weight:700;background:oklch(96% 0.003 90)" data-bind="recEditDay" value="${esc(s.recEditDay)}"/>
