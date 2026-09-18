@@ -1128,45 +1128,6 @@
       return arr.map(c => ({ ...c, pct: Math.round(c.amount / total * 100), amountText: this.fmtAbs(c.amount) }));
     },
 
-    // -------- CSV --------
-    exportCSV() {
-      const rows = [['fecha', 'tipo', 'importe', 'categoria', 'cuenta', 'nota']];
-      this.state.transactions.forEach(t => {
-        const accName = (this.state.accounts.find(a => a.id === t.accountId) || {}).name || '';
-        const catName = (this.state.categories.find(c => c.id === t.categoryId) || {}).name || '';
-        rows.push([t.date, t.type, t.amount, catName, accName, (t.note || '').replace(/,/g, ';')]);
-      });
-      const csv = rows.map(r => r.join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'patrimonio_transacciones.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    },
-    handleImportFile(e) {
-      const file = e.target.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        try {
-          const text = String(ev.target.result);
-          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-          lines.shift();
-          const newTx = [];
-          lines.forEach(line => {
-            const parts = line.split(',');
-            const [date, type, amount, catName, accName] = parts;
-            const note = parts.slice(5).join(',');
-            const acc = this.state.accounts.find(a => a.name === accName);
-            if (!acc) return;
-            const cat = this.state.categories.find(c => c.name === catName);
-            newTx.push({ id: uid(), type, amount: parseFloat(amount) || 0, date, accountId: acc.id, categoryId: cat ? cat.id : null, note: note || '' });
-          });
-          this.setState({ transactions: [...newTx, ...this.state.transactions] });
-          alert('Importadas ' + newTx.length + ' transacciones');
-        } catch (err) { alert('No se pudo importar el archivo'); }
-      };
-      reader.readAsText(file);
-      e.target.value = '';
-    },
     // -------- JSON backup (full state — accounts, investments, rules, history) --------
     exportJSON() {
       const blob = new Blob([JSON.stringify(this.pickPersisted(), null, 2)], { type: 'application/json' });
@@ -2149,10 +2110,6 @@
 
         <div class="label-caps" style="margin-top:22px">Datos</div>
         <button type="button" style="margin-top:8px;width:100%;padding:14px;border-radius:14px;border:none;background:oklch(93% 0.05 155);color:oklch(38% 0.1 155);font-size:14px;font-weight:700;cursor:pointer;text-align:left" data-action="loadDemoData">Cargar datos de ejemplo</button>
-        <button type="button" style="margin-top:8px;width:100%;padding:14px;border-radius:14px;border:none;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;text-align:left;box-shadow:var(--card-shadow)" data-action="exportCSV">Exportar datos (CSV)</button>
-        <label style="display:block;margin-top:8px;width:100%;padding:14px;border-radius:14px;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;box-shadow:var(--card-shadow);box-sizing:border-box">Importar datos (CSV)
-          <input type="file" accept=".csv" data-action="handleImportFile" style="display:none"/>
-        </label>
         <button type="button" style="margin-top:16px;width:100%;padding:14px;border-radius:14px;border:none;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;text-align:left;box-shadow:var(--card-shadow)" data-action="exportJSON">Exportar copia de seguridad completa (JSON)</button>
         <label style="display:block;margin-top:8px;width:100%;padding:14px;border-radius:14px;background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;box-shadow:var(--card-shadow);box-sizing:border-box">Importar copia de seguridad (JSON)
           <input type="file" accept=".json" data-action="handleImportJSON" style="display:none"/>
@@ -2818,7 +2775,6 @@
     confirmFundSell: () => App.confirmFundSell(),
     deleteFund: () => App.deleteFund(),
     loadDemoData: () => App.seedDemoData(),
-    exportCSV: () => App.exportCSV(),
     exportJSON: () => App.exportJSON(),
     openTxDetail: (id) => App.openTxDetail(id),
     saveTxEdit: () => App.saveTxEdit(),
@@ -2836,7 +2792,7 @@
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const action = el.dataset.action;
-      if (action === 'none' || action === 'handleImportFile' || action === 'handleImportJSON') return;
+      if (action === 'none' || action === 'handleImportJSON') return;
       const id = el.dataset.id;
       const value = el.dataset.value;
       if (SIMPLE_SETTERS[action]) { SIMPLE_SETTERS[action](App.state, id, value); App.commit(); return; }
@@ -2871,7 +2827,6 @@
     });
 
     root.addEventListener('change', (e) => {
-      if (e.target.dataset.action === 'handleImportFile') App.handleImportFile(e);
       if (e.target.dataset.action === 'handleImportJSON') App.importJSONFile(e);
     });
 
