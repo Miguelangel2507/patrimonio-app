@@ -660,7 +660,11 @@
       }
       const newUnits = fund.units + units;
       const newInvested = fund.totalInvested + amt;
-      fund.units = newUnits; fund.totalInvested = newInvested; fund.avgCost = newUnits ? newInvested / newUnits : 0; fund.currentPrice = price;
+      fund.units = newUnits; fund.totalInvested = newInvested; fund.avgCost = newUnits ? newInvested / newUnits : 0;
+      // Don't clobber a live auto-fetched price with this purchase's price —
+      // only a manually-priced fund (or a brand-new one, which has none yet)
+      // should take its currentPrice from the transaction.
+      if (fund.priceSource === 'manual' || this.state.txFundMode === 'new') fund.currentPrice = price;
       const newOp = { id: uid(), type: 'buy', date: this.state.txDate, units, price, amount: amt };
       fund.ops = [newOp, ...fund.ops];
       const accounts = this.state.accounts.map(a => a.id === this.state.txAccountId ? { ...a, balance: a.balance - amt } : a);
@@ -957,7 +961,9 @@
       const investments = this.state.investments.map(f => {
         if (f.id !== fund.id) return f;
         const newUnits = f.units + units, newInvested = f.totalInvested + cost;
-        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newInvested / newUnits, currentPrice: price, ops: [newOp, ...f.ops] };
+        // Don't clobber a live auto-fetched price with this purchase's price.
+        const currentPrice = f.priceSource === 'manual' ? price : f.currentPrice;
+        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newInvested / newUnits, currentPrice, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance - cashOut } : a);
       const tx = { id: uid(), type: 'investment_buy', amount: cashOut, date, accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
@@ -981,7 +987,9 @@
         if (f.id !== fund.id) return f;
         const newUnits = f.units - units;
         const newInvested = newUnits > 1e-9 ? f.totalInvested * (newUnits / f.units) : 0;
-        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newUnits > 1e-9 ? newInvested / newUnits : 0, currentPrice: price, ops: [newOp, ...f.ops] };
+        // Don't clobber a live auto-fetched price with this sale's price.
+        const currentPrice = f.priceSource === 'manual' ? price : f.currentPrice;
+        return { ...f, units: newUnits, totalInvested: newInvested, avgCost: newUnits > 1e-9 ? newInvested / newUnits : 0, currentPrice, ops: [newOp, ...f.ops] };
       });
       const accounts = this.state.accounts.map(a => a.id === this.state.fundActionAccountId ? { ...a, balance: a.balance + proceeds } : a);
       const tx = { id: uid(), type: 'investment_sell', amount: proceeds, date, accountId: this.state.fundActionAccountId, fundId: fund.id, opId: newOp.id, note: fund.name };
