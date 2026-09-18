@@ -216,7 +216,7 @@
         jornal: 0, editingJornal: false, editingJornalValue: '',
         recurringInlineOpen: false, editingRecurringId: null,
         recEditType: 'expense', recEditAmount: '', recEditCategoryId: '', recEditAccountId: '', recEditFreq: 'monthly', recEditDay: '', recEditNote: '',
-        monthlyCloses: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null, fondosOpen: true,
+        monthlyCloses: [], priceSnapshots: [], sheetPrices: {}, sheetPricesStatus: 'idle', sheetPricesUpdatedAt: null, confirmingRuleId: null, fondosOpen: true,
       };
     },
 
@@ -250,7 +250,7 @@
         accounts: s.accounts, transactions: s.transactions, categories: s.categories,
         recurringRules: s.recurringRules, investments: s.investments,
         netWorthHistory: s.netWorthHistory, investmentHistory: s.investmentHistory,
-        jornal: s.jornal, monthlyCloses: s.monthlyCloses,
+        jornal: s.jornal, monthlyCloses: s.monthlyCloses, priceSnapshots: s.priceSnapshots,
       };
     },
     persist() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.pickPersisted())); } catch (e) {} },
@@ -309,20 +309,29 @@
       return invested;
     },
     // Best-effort market value at a date when there's no real monthlyClose:
-    // each fund is valued at its units held as of that date times the price
-    // from its most recent purchase at or before that date — a real observed
-    // VL, just not a same-day snapshot. This is what "estimado con el precio
-    // de tus compras" means; valuing at pure cost (assuming flat 0% growth)
-    // would silently fold any real prior movement into whatever month finally
-    // gets a real snapshot to compare against.
+    // each fund is valued at its units held as of that date times the most
+    // recent known price at or before that date — either a purchase price or
+    // a price fetched from the sheet on some prior day (priceSnapshots),
+    // whichever is more recent. This is still an estimate, not a same-day
+    // NAV, so it can be off when the closest known price is weeks old; it
+    // gets more accurate over time as more daily snapshots accumulate.
+    // Valuing at pure cost (assuming flat 0% growth) would silently fold any
+    // real prior movement into whatever month finally gets a real snapshot.
     marketValueAsOfDate(dateISO) {
       let total = 0;
       this.state.investments.forEach(f => {
-        const ops = (f.ops || []).filter(o => o.date < dateISO).sort((a, b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
-        if (!ops.length) return;
+        let bestDate = null, bestPrice = null;
+        (f.ops || []).forEach(o => {
+          if (o.date < dateISO && (!bestDate || o.date > bestDate)) { bestDate = o.date; bestPrice = o.price; }
+        });
+        (this.state.priceSnapshots || []).forEach(snap => {
+          const p = f.isin ? snap.prices[f.isin.trim()] : undefined;
+          if (p !== undefined && snap.date < dateISO && (!bestDate || snap.date > bestDate)) { bestDate = snap.date; bestPrice = p; }
+        });
+        if (bestPrice === null) return;
         let units = 0;
-        ops.forEach(o => { units += (o.type === 'buy' ? o.units : -o.units); });
-        total += units * ops[ops.length - 1].price;
+        (f.ops || []).forEach(o => { if (o.date < dateISO) units += (o.type === 'buy' ? o.units : -o.units); });
+        total += units * bestPrice;
       });
       return total;
     },
@@ -434,7 +443,9 @@
             const isin = (f.isin || '').trim();
             return (isin && prices[isin] !== undefined) ? { ...f, currentPrice: prices[isin] } : f;
           });
-          this.setState({ investments, sheetPrices: prices, sheetPricesStatus: 'ok', sheetPricesUpdatedAt: new Date().toISOString() });
+          const today = todayISO();
+          const priceSnapshots = [...(this.state.priceSnapshots || []).filter(snap => snap.date !== today), { date: today, prices }];
+          this.setState({ investments, sheetPrices: prices, sheetPricesStatus: 'ok', sheetPricesUpdatedAt: new Date().toISOString(), priceSnapshots });
         } catch (e) { this.setState({ sheetPricesStatus: 'error' }); }
         cleanup();
       };
