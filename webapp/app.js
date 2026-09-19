@@ -198,7 +198,7 @@
         txFundMode: 'existing', txFundId: '', txFundName: '', txFundIsin: '', txFundPrice: '', txFundUnits: '',
         showNewCategory: false, newCatName: '', newCatColor: PALETTE[0],
         accForm: { name: '', type: 'banco', balance: '', isDebt: false, color: PALETTE[0] }, editingAccountId: null,
-        addMoneyAmount: '', addMoneyNote: '', addMoneyAccountId: '',
+        addMoneyAmount: '', addMoneyNote: '', addMoneyAccountId: '', addMoneyCategoryId: '',
         transferFrom: '', transferTo: '', transferAmount: '',
         activeFundId: null, fundAction: null, fundActionAmount: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: '', fundActionDate: todayISO(),
         editingPlanId: null, planEditAmount: '', planEditDay: '', planEditFreq: 'monthly', planEditAccountId: '',
@@ -894,13 +894,18 @@
       const recurringRules = this.state.recurringRules.filter(r => r.accountId !== id);
       this.setState({ accounts, transactions, recurringRules, modal: null, editingAccountId: null, activeAccountIndex: 0 });
     },
-    openAddMoney(accountId) { this.setState({ addMoneyAccountId: accountId || (this.state.accounts[0] ? this.state.accounts[0].id : ''), addMoneyAmount: '', addMoneyNote: '', modal: 'addMoney' }); },
+    openAddMoney(accountId) { this.setState({ addMoneyAccountId: accountId || (this.state.accounts[0] ? this.state.accounts[0].id : ''), addMoneyAmount: '', addMoneyNote: '', addMoneyCategoryId: '', modal: 'addMoney' }); },
+    // Creates a real 'income' transaction (with an optional category) rather
+    // than a bare 'adjustment' — otherwise this money silently doesn't count
+    // toward Stats' Ingresos or the Jornal breakdown, which only look at
+    // type 'income'/'expense'. 'adjustment' stays reserved for opening
+    // balances (onboarding / new account), not user-facing top-ups.
     addMoney() {
       const amt = parseNum(this.state.addMoneyAmount);
       if (!amt || amt <= 0 || !this.state.addMoneyAccountId) { alert('Completa los datos'); return; }
       const accounts = this.state.accounts.map(a => a.id === this.state.addMoneyAccountId ? { ...a, balance: a.balance + amt } : a);
-      const tx = { id: uid(), type: 'adjustment', amount: amt, date: todayISO(), accountId: this.state.addMoneyAccountId, note: this.state.addMoneyNote || 'Añadir dinero' };
-      this.setState({ accounts, transactions: [tx, ...this.state.transactions], modal: null, addMoneyAmount: '', addMoneyNote: '' });
+      const tx = { id: uid(), type: 'income', amount: amt, date: todayISO(), accountId: this.state.addMoneyAccountId, categoryId: this.state.addMoneyCategoryId || null, note: this.state.addMoneyNote || 'Añadir dinero' };
+      this.setState({ accounts, transactions: [tx, ...this.state.transactions], modal: null, addMoneyAmount: '', addMoneyNote: '', addMoneyCategoryId: '' });
     },
     openTransfer() { this.setState({ transferFrom: '', transferTo: '', transferAmount: '', modal: 'transfer' }); },
     doTransfer() {
@@ -1328,7 +1333,7 @@
       let title, color, letter, amountColor, amountText;
       if (t.type === 'expense' || t.type === 'income') {
         const cat = s.categories.find(c => c.id === t.categoryId);
-        title = cat ? cat.name : 'Sin categoría';
+        title = cat ? cat.name : (t.note || 'Sin categoría');
         color = cat ? cat.color : (t.type === 'income' ? 'oklch(72% 0.15 155)' : 'oklch(64% 0.19 25)');
         letter = (title[0] || '?').toUpperCase();
         amountColor = t.type === 'income' ? 'oklch(45% 0.13 155)' : 'oklch(58% 0.19 25)';
@@ -2257,6 +2262,11 @@
   Render.modalAddMoney = (App) => {
     const s = App.state;
     const accounts = App.sortedAccounts();
+    const categoryOptions = s.categories.filter(c => c.type === 'income').map(c => `
+      <button type="button" class="category-chip" data-action="selectAddMoneyCategory" data-id="${c.id}">
+        <span class="cat-icon" style="background:${c.color};box-shadow:${ringFor(c.color, s.addMoneyCategoryId === c.id)}">${Icons.category(c.name)}</span>
+        <span class="cat-name">${esc(c.name)}</span>
+      </button>`).join('');
     return `
     <div class="modal-overlay">
       ${Render.modalHeader('Añadir dinero')}
@@ -2265,6 +2275,8 @@
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${accounts.map(a => Render.accChipFlat(a, s.addMoneyAccountId, 'selectAddMoneyAccount')).join('')}</div>
         <div class="label-caps" style="margin-top:18px">Cantidad</div>
         <input type="text" inputmode="decimal" class="field-input big" style="margin-top:8px" data-bind="addMoneyAmount" value="${esc(s.addMoneyAmount)}" placeholder="0,00"/>
+        <div class="label-caps" style="margin-top:18px">Categoría (opcional)</div>
+        <div class="hscroll gap14" style="margin-top:8px;padding-bottom:4px">${categoryOptions}</div>
         <div class="label-caps" style="margin-top:18px">Nota (opcional)</div>
         <input type="text" class="field-input" style="margin-top:8px" data-bind="addMoneyNote" value="${esc(s.addMoneyNote)}" placeholder="Ej. Nómina"/>
         <button type="button" class="btn-primary" style="margin-top:26px" data-action="addMoney">Añadir</button>
@@ -2751,6 +2763,7 @@
     selectAccType: (s, id, v) => { s.accForm = { ...s.accForm, type: v }; },
     selectAccColor: (s, id, v) => { s.accForm = { ...s.accForm, color: v }; },
     selectAddMoneyAccount: (s, id) => { s.addMoneyAccountId = id; },
+    selectAddMoneyCategory: (s, id) => { s.addMoneyCategoryId = id; },
     selectTransferFrom: (s, id) => { s.transferFrom = id; },
     selectTransferTo: (s, id) => { s.transferTo = id; },
     selectFundActionAccount: (s, id) => { s.fundActionAccountId = id; },
