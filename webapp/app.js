@@ -241,6 +241,11 @@
       if (cb) cb();
     },
     commit() {
+      // Catches a rule that just became due within this same session — e.g.
+      // creating a new recurring expense whose first occurrence is today
+      // would otherwise only post the next time the app happens to reload,
+      // not immediately after being created.
+      this.autoPostDueRecurring();
       this.persist();
       this.syncSnapshotsQuiet();
       this.render();
