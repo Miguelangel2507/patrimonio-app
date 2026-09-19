@@ -227,6 +227,7 @@
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) Object.assign(this.state, JSON.parse(raw));
       } catch (e) {}
+      this.autoPostDueRecurring();
       this.syncSnapshots();
       this.render();
       this.fetchSheetPrices();
@@ -739,15 +740,40 @@
 
     // -------- recurring --------
     // Investment rules confirm via openConfirmDueRule -> the fund buy sheet
-    // (editable date/units/price), not here — this only handles income/expense.
-    confirmRecurring(ruleId) {
-      const rule = this.state.recurringRules.find(r => r.id === ruleId);
-      if (!rule || rule.type === 'investment') return;
+    // (editable date/units/price) — a fund's price genuinely moves day to
+    // day, so that flow stays manual. Income/expense rules don't have that
+    // problem (a fixed amount is a fixed amount), so they auto-post here
+    // instead of waiting on a confirm tap that, before this, no screen in
+    // the app actually offered — a rule's nextDate just sat there forever.
+    autoPostDueRecurring() {
       const today = todayISO();
-      const accounts = this.state.accounts.map(a => a.id === rule.accountId ? { ...a, balance: rule.type === 'expense' ? a.balance - rule.amount : a.balance + rule.amount } : a);
-      const tx = { id: uid(), type: rule.type, amount: rule.amount, date: today, accountId: rule.accountId, categoryId: rule.categoryId, note: rule.note, recurringRuleId: rule.id };
-      const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
-      this.setState({ accounts, transactions: [tx, ...this.state.transactions], recurringRules });
+      if (!this.state.recurringRules.some(r => r.type !== 'investment' && r.nextDate <= today)) return;
+      let accounts = this.state.accounts;
+      const newTx = [];
+      const recurringRules = this.state.recurringRules.map(rule => {
+        if (rule.type === 'investment' || rule.nextDate > today) return rule;
+        const followingOccurrence = this.addFrequency(rule.nextDate, rule.frequency);
+        if (followingOccurrence > today) {
+          // Exactly one occurrence due (the normal case: the app just
+          // wasn't open on the exact day) — post it and advance one step.
+          const tx = { id: uid(), type: rule.type, amount: rule.amount, date: rule.nextDate, accountId: rule.accountId, categoryId: rule.categoryId, note: rule.note, recurringRuleId: rule.id };
+          newTx.push(tx);
+          accounts = accounts.map(a => a.id === rule.accountId ? { ...a, balance: rule.type === 'expense' ? a.balance - rule.amount : a.balance + rule.amount } : a);
+          return { ...rule, nextDate: followingOccurrence };
+        }
+        // More than one occurrence behind — a rule left over from before
+        // auto-posting existed (its nextDate never advanced), or a long
+        // stretch without opening the app. Jump straight to the next future
+        // date without posting the backlog, so we don't dump months of
+        // transactions the user may already have logged by hand.
+        let next = followingOccurrence, guard = 0;
+        while (next <= today && guard < 60) { next = this.addFrequency(next, rule.frequency); guard++; }
+        return { ...rule, nextDate: next };
+      });
+      this.state.accounts = accounts;
+      this.state.recurringRules = recurringRules;
+      if (newTx.length) this.state.transactions = [...newTx, ...this.state.transactions];
+      this.persist();
     },
     skipRecurring(ruleId) {
       const recurringRules = this.state.recurringRules.map(r => r.id === ruleId ? { ...r, nextDate: this.addFrequency(r.nextDate, r.frequency) } : r);
@@ -2813,7 +2839,6 @@
     saveCategoryBudget: () => App.saveCategoryBudget(),
     clearCategoryBudget: () => App.clearCategoryBudget(),
     saveTx: () => App.saveTx(),
-    confirmRecurring: (id) => App.confirmRecurring(id),
     skipRecurring: (id) => App.skipRecurring(id),
     deleteRecurring: (id) => App.deleteRecurring(id),
     openPlanEdit: (id) => App.openPlanEdit(id),
