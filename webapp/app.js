@@ -993,9 +993,19 @@
       this.setState({ dragId: null, dragY: 0 });
     },
     onAccountsScroll(e) {
+      if (this._suppressAccountScroll) return; // ignore the scroll event our own render's restore triggers
       const cardW = 336;
       const idx = Math.round(e.target.scrollLeft / cardW);
-      if (idx !== this.state.activeAccountIndex) { this.state.activeAccountIndex = idx; this.updateAccountDots(idx); }
+      if (idx !== this.state.activeAccountIndex) {
+        this.state.activeAccountIndex = idx;
+        this.updateAccountDots(idx); // instant feedback on the dots while still scrolling
+        // The quick-actions row (Editar/Transferir/…) and movements list below
+        // also depend on which account is selected, but a full re-render mid-
+        // swipe would replace the scroller DOM and fight the native scroll-snap
+        // gesture — so it's deferred until scrolling settles instead.
+        clearTimeout(this._accountsScrollSettleTimer);
+        this._accountsScrollSettleTimer = setTimeout(() => this.render(), 120);
+      }
     },
     updateAccountDots(idx) {
       const dots = document.querySelectorAll('.account-dot');
@@ -2743,10 +2753,12 @@
       const prevScreen = root.querySelector('.screen');
       const prevModalBody = root.querySelector('.modal-body');
       const prevSheet = root.querySelector('.bottom-sheet');
+      const prevAccountScroller = root.querySelector('.account-scroller');
       const savedScroll = {
         screen: prevScreen ? prevScreen.scrollTop : 0,
         modal: prevModalBody ? prevModalBody.scrollTop : 0,
         sheet: prevSheet ? prevSheet.scrollTop : 0,
+        accountScroller: prevAccountScroller ? prevAccountScroller.scrollLeft : 0,
       };
 
       let html;
@@ -2765,6 +2777,17 @@
       const newScreen = root.querySelector('.screen'); if (newScreen) newScreen.scrollTop = savedScroll.screen;
       const newModalBody = root.querySelector('.modal-body'); if (newModalBody) newModalBody.scrollTop = savedScroll.modal;
       const newSheet = root.querySelector('.bottom-sheet'); if (newSheet) newSheet.scrollTop = savedScroll.sheet;
+      const newAccountScroller = root.querySelector('.account-scroller');
+      if (newAccountScroller) {
+        // Restoring scrollLeft on a freshly-rendered scroll-snap container can
+        // itself trigger a native 'scroll' event (the browser settling onto a
+        // snap point) — suppress onAccountsScroll's reaction to that one, or
+        // it would immediately overwrite the activeAccountIndex we're trying
+        // to preserve.
+        this._suppressAccountScroll = true;
+        newAccountScroller.scrollLeft = savedScroll.accountScroller;
+        requestAnimationFrame(() => { this._suppressAccountScroll = false; });
+      }
 
       if (s.editingPrice) {
         const priceInput = root.querySelector('[data-blur-action="saveEditPrice"]');
