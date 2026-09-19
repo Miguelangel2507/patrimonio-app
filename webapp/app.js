@@ -514,7 +514,17 @@
       const d = new Date(dateStr + 'T00:00:00');
       if (freq === 'weekly') d.setDate(d.getDate() + 7);
       else if (freq === 'annual') d.setFullYear(d.getFullYear() + 1);
-      else d.setMonth(d.getMonth() + 1);
+      else {
+        // Clamp to the target month's last valid day instead of letting Date
+        // auto-roll into the following month (e.g. Jan 31 -> Feb 31 would
+        // silently become Mar 2/3) — a monthly rule keeps its day, or the
+        // closest one that exists, instead of drifting forward over time.
+        const day = d.getDate();
+        d.setDate(1);
+        d.setMonth(d.getMonth() + 1);
+        const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, lastDay));
+      }
       return d.toISOString().slice(0, 10);
     },
   };
@@ -560,15 +570,21 @@
     selectNewFund() { this.setState({ txFundMode: 'new', txFundId: '' }); },
     toggleNewCategory() { this.setState({ showNewCategory: !this.state.showNewCategory }); },
 
+    // Single category-object shape, used everywhere a category gets created
+    // (inline from add-tx, from Settings, or auto-created for a recurring
+    // preset) so a future new field only needs to be added in one place.
+    makeCategory({ name, type, color, kind }) {
+      return { id: uid(), name, type, color, kind: type === 'expense' ? (kind || 'daily') : undefined };
+    },
     addCategoryInline() {
       const name = this.state.newCatName.trim(); if (!name) return;
       const type = this.state.txType === 'income' ? 'income' : 'expense';
-      const cat = { id: uid(), name, type, color: this.state.newCatColor, kind: type === 'expense' ? 'daily' : undefined };
+      const cat = this.makeCategory({ name, type, color: this.state.newCatColor });
       this.setState({ categories: [...this.state.categories, cat], newCatName: '', newCatColor: PALETTE[0], showNewCategory: false, txCategoryId: cat.id });
     },
     addCategoryFromModal() {
       const name = this.state.newCatName.trim(); if (!name) return;
-      const cat = { id: uid(), name, type: this.state.catTab, color: this.state.newCatColor, kind: this.state.catTab === 'expense' ? 'daily' : undefined };
+      const cat = this.makeCategory({ name, type: this.state.catTab, color: this.state.newCatColor });
       this.setState({ categories: [...this.state.categories, cat], newCatName: '', newCatColor: PALETTE[0] });
     },
     openCategoryBudget(id) {
@@ -789,7 +805,7 @@
       if (preset) {
         let cat = categories.find(c => c.name === preset.catName && c.type === 'expense');
         if (!cat) {
-          cat = { id: uid(), name: preset.catName, type: 'expense', color: PALETTE[categories.length % PALETTE.length], kind: 'fixed' };
+          cat = this.makeCategory({ name: preset.catName, type: 'expense', color: PALETTE[categories.length % PALETTE.length], kind: 'fixed' });
           categories = [...categories, cat];
         }
         categoryId = cat.id;
