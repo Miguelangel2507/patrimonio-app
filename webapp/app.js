@@ -200,7 +200,7 @@
         accForm: { name: '', type: 'banco', balance: '', isDebt: false, color: PALETTE[0] }, editingAccountId: null,
         addMoneyAmount: '', addMoneyNote: '', addMoneyAccountId: '',
         transferFrom: '', transferTo: '', transferAmount: '',
-        activeFundId: null, fundAction: null, fundActionAmount: '', fundActionPrice: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: '', fundActionDate: todayISO(),
+        activeFundId: null, fundAction: null, fundActionAmount: '', fundActionUnits: '', fundActionFee: '', fundActionAccountId: '', fundActionDate: todayISO(),
         editingPlanId: null, planEditAmount: '', planEditDay: '', planEditFreq: 'monthly', planEditAccountId: '',
         editingPrice: false, editingPriceValue: '',
         statsTab: 'income', statsPeriod: 'month', statsRef: todayISO(),
@@ -2683,58 +2683,6 @@
   // Master render + action dispatch tables
   // ============================================================
   Object.assign(App, {
-    // Temporary on-screen diagnostic strip — pulled once the bottom-gap issue is
-    // confirmed fixed on a real device. Prints hard numbers instead of guesses.
-    DEBUG_VIEWPORT: false,
-    // Appended directly to <body>, as a sibling of #app rather than a descendant —
-    // rules out any nested-fixed-inside-fixed containing-block quirk in #app itself.
-    // Kept thin (28px) and pointer-events:none so it can't block any real button.
-    ensureRawBottomProbe() {
-      if (document.getElementById('rawBottomProbe')) return;
-      const el = document.createElement('div');
-      el.id = 'rawBottomProbe';
-      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:28px;z-index:99999;background:rgba(255,149,0,0.999);pointer-events:none';
-      document.body.appendChild(el);
-    },
-    paintDebugStrip() {
-      const el = document.getElementById('debugStrip');
-      if (!el) return;
-      // Fill with a same-length placeholder FIRST and force layout, so the
-      // strip's real flex height (and therefore everything measured below,
-      // like the tab bar's bottom edge) reflects what actually renders —
-      // measuring an empty strip understates its height and throws off
-      // every downstream number.
-      el.textContent = 'GAP xxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxx xxx=xxxx xxx=xxx xxxxxxx=xxx xxx=x | xxxxx-xxxxxx:x xxxxx xx x=xxxx (xxxxxx = xxxxx xx xxxx xxxxx)\n#xxx xxxx=xxx..xxx | xxx-xxx xxxxxx=xxx.x | xxxxx xxxxxx=xxx.x | xxxx-xxxxx xxx=xxx.x\nxxxx-xxxxxx=xxxx | --xxx-xx=xxxxx';
-      void el.offsetHeight;
-      const probe = document.createElement('div');
-      probe.style.cssText = 'position:fixed;bottom:0;left:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden';
-      document.body.appendChild(probe);
-      const safeBottom = getComputedStyle(probe).paddingBottom;
-      document.body.removeChild(probe);
-      const fixedProbe = document.createElement('div');
-      fixedProbe.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:1px;visibility:hidden';
-      document.body.appendChild(fixedProbe);
-      const fixedBottomY = fixedProbe.getBoundingClientRect().top;
-      document.body.removeChild(fixedProbe);
-      const appRect = document.getElementById('app').getBoundingClientRect();
-      const stripRect = el.getBoundingClientRect();
-      const probeEl = document.getElementById('rawBottomProbe');
-      const probeRect = probeEl ? probeEl.getBoundingClientRect() : null;
-      const tabBarEl = document.querySelector('.tab-bar');
-      const tabBarRect = tabBarEl ? tabBarEl.getBoundingClientRect() : null;
-      const appVh = getComputedStyle(document.documentElement).getPropertyValue('--app-vh');
-      const vv = window.visualViewport;
-      const gap = tabBarRect ? (window.innerHeight - tabBarRect.bottom).toFixed(1) : 'n/a';
-      el.textContent =
-        'GAP tab-bar-bottom..innerH = ' + gap + 'px' +
-        '\ninnerH=' + window.innerHeight + ' vvH=' + (vv ? vv.height : 'n/a') + ' screenH=' + screen.height + ' dpr=' + window.devicePixelRatio +
-        ' | fixed-bottom:0 lands at y=' + fixedBottomY + ' (should = innerH if they agree)' +
-        '\n#app rect=' + appRect.top.toFixed(0) + '..' + appRect.bottom.toFixed(0) +
-        (tabBarRect ? ' | tab-bar bottom=' + tabBarRect.bottom.toFixed(1) : '') +
-        ' | strip bottom=' + stripRect.bottom.toFixed(1) +
-        (probeRect ? ' | body-probe top=' + probeRect.top.toFixed(1) : '') +
-        '\nsafe-bottom=' + safeBottom + ' | --app-vh=' + appVh;
-    },
     render() {
       const s = this.state;
       const root = document.getElementById('app');
@@ -2756,11 +2704,9 @@
         else if (s.screen === 'investments') screenHtml = Render.investments(this);
         else if (s.screen === 'accounts') screenHtml = Render.accounts(this);
         else screenHtml = Render.home(this);
-        const debugStrip = App.DEBUG_VIEWPORT ? `<div id="debugStrip" style="flex-shrink:0;background:rgba(255,0,68,0.999);color:#fff;font:11px/1.4 ui-monospace,monospace;padding:6px 10px calc(6px + env(safe-area-inset-bottom));white-space:pre-wrap"></div>` : '';
-        html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${debugStrip}${s.modal ? Render.modal(this) : ''}`;
+        html = `<div class="app-main"><div class="screen">${screenHtml}</div></div>${!s.modal ? Render.tabBar(s) : ''}${s.modal ? Render.modal(this) : ''}`;
       }
       root.innerHTML = html;
-      if (App.DEBUG_VIEWPORT) { App.ensureRawBottomProbe(); App.paintDebugStrip(); }
 
       const newScreen = root.querySelector('.screen'); if (newScreen) newScreen.scrollTop = savedScroll.screen;
       const newModalBody = root.querySelector('.modal-body'); if (newModalBody) newModalBody.scrollTop = savedScroll.modal;
